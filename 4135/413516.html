@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 連連看 - 道具挑戰版</title>
+    <style>
+        :root {
+            --bg-color: #f0f4f8;
+            --primary-color: #4a90e2;
+            --danger-color: #e74c3c;
+            --success-color: #2ecc71;
+            --item-color: #f1c40f;
+            --card-bg: #ffffff;
+            --card-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            --font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            font-family: var(--font-family);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .difficulty-selector {
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .diff-btn {
+            padding: 6px 14px;
+            border: 2px solid var(--primary-color);
+            background: white;
+            color: var(--primary-color);
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .diff-btn.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 1rem;
+            background: white;
+            padding: 10px 20px;
+            border-radius: 15px;
+            box-shadow: var(--card-shadow);
+            align-items: center;
+        }
+
+        .stat-item {
+            font-weight: bold;
+            font-size: 1rem;
+        }
+
+        .stat-item span {
+            color: var(--primary-color);
+        }
+
+        #timer.warning {
+            color: var(--danger-color);
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0.5; }
+        }
+
+        .items-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 1.5rem;
+        }
+
+        .item-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: white;
+            border: none;
+            padding: 10px;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: var(--card-shadow);
+            transition: transform 0.2s;
+            width: 80px;
+        }
+
+        .item-btn:hover:not(:disabled) {
+            transform: translateY(-3px);
+        }
+
+        .item-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .item-icon {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+
+        .item-count {
+            font-size: 0.8rem;
+            background: var(--item-color);
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .game-container {
+            display: grid;
+            gap: 8px;
+            padding: 15px;
+            background: #dee2e6;
+            border-radius: 15px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 95vw;
+            margin-bottom: 1.5rem;
+        }
+
+        .card {
+            aspect-ratio: 1 / 1;
+            background-color: var(--card-bg);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+            box-shadow: var(--card-shadow);
+            border: 2px solid transparent;
+        }
+
+        /* 難度尺寸微調 */
+        .card.size-easy { font-size: 2.2rem; width: 65px; }
+        .card.size-medium { font-size: 1.6rem; width: 50px; }
+        .card.size-hard { font-size: 1.3rem; width: 42px; }
+        .card.size-hell { font-size: 1rem; width: 32px; }
+
+        @media (max-width: 600px) {
+            .card.size-easy { width: 55px; font-size: 1.8rem; }
+            .card.size-medium { width: 42px; font-size: 1.4rem; }
+            .card.size-hard { width: 34px; font-size: 1.1rem; }
+            .card.size-hell { width: 26px; font-size: 0.8rem; }
+        }
+
+        .card.selected {
+            border-color: var(--primary-color);
+            background-color: #eef6ff;
+            transform: scale(0.9);
+        }
+
+        .card.matched {
+            transform: scale(0);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .modal {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+            text-align: center;
+            z-index: 100;
+            display: none;
+            width: 280px;
+        }
+
+        .modal.active { display: block; }
+
+        .overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            display: none;
+            z-index: 99;
+        }
+
+        .overlay.active { display: block; }
+
+        .btn-main {
+            padding: 10px 25px;
+            font-size: 1rem;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Emoji 連連看 🚀</h1>
+    </div>
+
+    <div class="difficulty-selector">
+        <button class="diff-btn active" onclick="setDifficulty('easy', this)">簡單</button>
+        <button class="diff-btn" onclick="setDifficulty('medium', this)">中等</button>
+        <button class="diff-btn" onclick="setDifficulty('hard', this)">困難</button>
+        <button class="diff-btn" onclick="setDifficulty('hell', this)">地獄</button>
+    </div>
+
+    <div class="stats-bar">
+        <div class="stat-item">剩餘時間: <span id="timer">60</span>s</div>
+        <div class="stat-item">剩餘配對: <span id="remaining">0</span></div>
+    </div>
+
+    <div class="items-container">
+        <button class="item-btn" id="rocketBtn" onclick="useRocket()">
+            <span class="item-icon">🚀</span>
+            <span class="item-count" id="rocketCount">2</span>
+            <span style="font-size: 10px; margin-top:4px;">火箭消除</span>
+        </button>
+        <button class="item-btn" id="clockBtn" onclick="useClock()">
+            <span class="item-icon">⏳</span>
+            <span class="item-count" id="clockCount">2</span>
+            <span style="font-size: 10px; margin-top:4px;">增加時間</span>
+        </button>
+    </div>
+
+    <div class="game-container" id="gameBoard"></div>
+
+    <button class="btn-main" onclick="initGame()" style="background-color: var(--secondary-color);">放棄並重開</button>
+
+    <div class="overlay" id="overlay"></div>
+    <div class="modal" id="gameModal">
+        <h2 id="modalTitle">挑戰成功！</h2>
+        <p id="modalMsg"></p>
+        <button class="btn-main" onclick="initGame()">再玩一次</button>
+    </div>
+
+    <script>
+        const emojiPool = ['🍎', '🐶', '🚀', '🌈', '🍦', '🎸', '🎲', '👻', '🍕', '🦁', '🛸', '🎨', '💎', '🍀', '🔥', '🌊', '🌙', '☀️', '🍄', '🍔', '🍟', '🍣', '🎸', '🎹', '🎻', '🎺', '🏎️', '✈️', '⛵', '🛰️', '🦉', '🦊', '🐼', '🐨', '🐯', '🐸', '🐙', '🦖', '🦄', '🐝', '💡', '⏰', '🎁', '🎈', '🧸', '🍪', '🍩', '🍫', '🍓', '🥑'];
+
+        const configs = {
+            easy:   { cols: 4, rows: 4, time: 45, rockets: 2, clocks: 2 },
+            medium: { cols: 6, rows: 6, time: 90, rockets: 2, clocks: 3 },
+            hard:   { cols: 8, rows: 8, time: 180, rockets: 3, clocks: 4 },
+            hell:   { cols: 10, rows: 10, time: 300, rockets: 4, clocks: 5 }
+        };
+
+        let currentDiff = 'easy';
+        let firstCard = null;
+        let secondCard = null;
+        let canClick = true;
+        let matchedPairs = 0;
+        let totalPairs = 0;
+        let timeLeft = 0;
+        let timerInterval = null;
+        
+        let inventory = { rocket: 0, clock: 0 };
+
+        function setDifficulty(diff, btn) {
+            currentDiff = diff;
+            document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            initGame();
+        }
+
+        function initGame() {
+            const config = configs[currentDiff];
+            const board = document.getElementById('gameBoard');
+            totalPairs = (config.cols * config.rows) / 2;
+            
+            // 初始化數據
+            board.innerHTML = '';
+            board.style.gridTemplateColumns = `repeat(${config.cols}, 1fr)`;
+            firstCard = null;
+            secondCard = null;
+            canClick = true;
+            matchedPairs = 0;
+            timeLeft = config.time;
+            
+            inventory.rocket = config.rockets;
+            inventory.clock = config.clocks;
+            
+            updateStats();
+            document.getElementById('gameModal').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+            document.getElementById('timer').classList.remove('warning');
+
+            clearInterval(timerInterval);
+            startTimer();
+
+            // 生成並洗牌
+            let selectedEmojis = [...emojiPool].sort(() => Math.random() - 0.5).slice(0, totalPairs);
+            let gameData = [...selectedEmojis, ...selectedEmojis].sort(() => Math.random() - 0.5);
+
+            gameData.forEach((emoji) => {
+                const card = document.createElement('div');
+                card.className = `card size-${currentDiff}`;
+                card.dataset.emoji = emoji;
+                card.innerHTML = emoji;
+                card.onclick = () => handleCardClick(card);
+                board.appendChild(card);
+            });
+        }
+
+        function updateStats() {
+            document.getElementById('timer').textContent = timeLeft;
+            document.getElementById('remaining').textContent = totalPairs - matchedPairs;
+            document.getElementById('rocketCount').textContent = inventory.rocket;
+            document.getElementById('clockCount').textContent = inventory.clock;
+            
+            document.getElementById('rocketBtn').disabled = inventory.rocket <= 0;
+            document.getElementById('clockBtn').disabled = inventory.clock <= 0;
+
+            if (timeLeft <= 10) {
+                document.getElementById('timer').classList.add('warning');
+            } else {
+                document.getElementById('timer').classList.remove('warning');
+            }
+        }
+
+        function handleCardClick(card) {
+            if (!canClick || card.classList.contains('selected') || card.classList.contains('matched')) return;
+
+            card.classList.add('selected');
+            if (!firstCard) {
+                firstCard = card;
+            } else {
+                secondCard = card;
+                checkMatch();
+            }
+        }
+
+        function checkMatch() {
+            canClick = false;
+            if (firstCard.dataset.emoji === secondCard.dataset.emoji) {
+                markMatched(firstCard, secondCard);
+            } else {
+                setTimeout(() => {
+                    firstCard.classList.remove('selected');
+                    secondCard.classList.remove('selected');
+                    resetSelection();
+                }, 400);
+            }
+        }
+
+        function markMatched(c1, c2) {
+            setTimeout(() => {
+                c1.classList.add('matched');
+                c2.classList.add('matched');
+                matchedPairs++;
+                updateStats();
+                resetSelection();
+                if (matchedPairs === totalPairs) endGame(true);
+            }, 200);
+        }
+
+        function resetSelection() {
+            firstCard = null;
+            secondCard = null;
+            canClick = true;
+        }
+
+        // --- 道具功能 ---
+
+        function useRocket() {
+            if (inventory.rocket <= 0 || !canClick) return;
+            
+            // 尋找尚未配對的卡片
+            const availableCards = Array.from(document.querySelectorAll('.card:not(.matched)'));
+            if (availableCards.length < 2) return;
+
+            inventory.rocket--;
+            updateStats();
+
+            // 隨機抓一組對象消除 (隨機削掉 1~2 對，視剩餘數量而定)
+            const pairsToEliminate = Math.min(2, Math.floor(availableCards.length / 4) + 1);
+            
+            for (let i = 0; i < pairsToEliminate; i++) {
+                const currentUnmatched = Array.from(document.querySelectorAll('.card:not(.matched):not(.selected)'));
+                if (currentUnmatched.length < 2) break;
+                
+                const targetEmoji = currentUnmatched[0].dataset.emoji;
+                const pair = currentUnmatched.filter(c => c.dataset.emoji === targetEmoji);
+                
+                if (pair.length === 2) {
+                    pair[0].classList.add('matched');
+                    pair[1].classList.add('matched');
+                    matchedPairs++;
+                }
+            }
+            
+            updateStats();
+            if (matchedPairs === totalPairs) endGame(true);
+        }
+
+        function useClock() {
+            if (inventory.clock <= 0) return;
+            inventory.clock--;
+            timeLeft += 20; // 增加 20 秒
+            updateStats();
+        }
+
+        // --- 計時與結算 ---
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateStats();
+                if (timeLeft <= 0) {
+                    endGame(false);
+                }
+            }, 1000);
+        }
+
+        function endGame(isWin) {
+            clearInterval(timerInterval);
+            canClick = false;
+            const modal = document.getElementById('gameModal');
+            const title = document.getElementById('modalTitle');
+            const msg = document.getElementById('modalMsg');
+            
+            if (isWin) {
+                title.textContent = "🎉 挑戰成功！";
+                title.style.color = "var(--success-color)";
+                msg.textContent = `你太厲害了！在時限內完成了 ${configs[currentDiff].label} 難度。`;
+            } else {
+                title.textContent = "⏰ 時間到！";
+                title.style.color = "var(--danger-color)";
+                msg.textContent = "別氣餒，再試一次吧！善用道具可以跑得更遠喔。";
+            }
+            
+            modal.classList.add('active');
+            document.getElementById('overlay').classList.add('active');
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>

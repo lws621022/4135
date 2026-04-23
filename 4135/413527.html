@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>雙人貪吃蛇 - 道具大戰版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            touch-action: none; 
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(139, 92, 246, 0.2);
+        }
+        canvas {
+            display: block;
+            background-color: #1e293b;
+            border-radius: 8px;
+            image-rendering: pixelated;
+        }
+        .status-badge {
+            @apply px-2 py-1 rounded text-[10px] font-bold uppercase tracking-tighter;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen text-white p-4">
+
+    <!-- 頂部資訊欄 -->
+    <div class="mb-2 text-center w-full max-w-[800px]">
+        <h1 class="text-2xl font-extrabold text-purple-500 mb-2">SNAKE POWER-UP BATTLE</h1>
+        
+        <div class="grid grid-cols-2 gap-4">
+            <!-- 玩家 1 資訊 -->
+            <div class="bg-green-900/30 p-2 rounded-lg border border-green-500/30">
+                <div class="flex justify-between items-center mb-1">
+                    <span class="text-[10px] text-green-400 font-bold uppercase">玩家 (WASD)</span>
+                    <span class="text-xs text-red-400 font-bold" id="hp1">❤️ x1</span>
+                </div>
+                <div class="flex justify-between items-end">
+                    <div class="text-xl font-bold text-green-500 leading-none" id="score1">0</div>
+                    <div id="status1" class="flex gap-1"></div>
+                </div>
+            </div>
+            <!-- AI 資訊 -->
+            <div class="bg-blue-900/30 p-2 rounded-lg border border-blue-500/30">
+                <div class="flex justify-between items-center mb-1">
+                    <span class="text-[10px] text-blue-400 font-bold uppercase">電腦 AI</span>
+                    <span class="text-xs text-red-400 font-bold" id="hpAI">❤️ x1</span>
+                </div>
+                <div class="flex justify-between items-end">
+                    <div id="statusAI" class="flex gap-1"></div>
+                    <div class="text-xl font-bold text-blue-500 leading-none" id="score2">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 遊戲畫布區 -->
+    <div id="game-container" class="border-4 border-slate-700 rounded-xl overflow-hidden">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- 覆蓋層 -->
+        <div id="overlay" class="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center transition-opacity duration-300">
+            <div id="start-screen" class="text-center p-6">
+                <h2 class="text-2xl font-bold mb-4 text-purple-400">道具大戰模式</h2>
+                <div class="grid grid-cols-2 gap-3 mb-6 text-left">
+                    <div class="text-xs bg-slate-800 p-2 rounded">❤️ <span class="text-red-400">生命值</span>: 撞擊不立即死亡</div>
+                    <div class="text-xs bg-slate-800 p-2 rounded">🛡️ <span class="text-yellow-400">無敵</span>: 穿透一切礙物</div>
+                    <div class="text-xs bg-slate-800 p-2 rounded">⚡ <span class="text-cyan-400">加速</span>: 移動速度提升</div>
+                    <div class="text-xs bg-slate-800 p-2 rounded">🍎 <span class="text-green-400">食物</span>: 基本加分與成長</div>
+                </div>
+                <button id="start-btn" class="px-10 py-3 bg-purple-600 hover:bg-purple-500 rounded-full font-bold text-xl shadow-xl shadow-purple-900/40 transition-transform active:scale-95">開始遊戲</button>
+            </div>
+
+            <div id="game-over-screen" class="hidden text-center">
+                <h2 id="winner-text" class="text-4xl font-bold mb-2">你贏了！</h2>
+                <p id="game-over-reason" class="text-slate-400 mb-4 italic text-sm">AI 生命值耗盡</p>
+                <p class="text-yellow-500 font-bold mb-6" id="auto-restart-timer">將在 3 秒後自動開始...</p>
+                <button id="restart-btn" class="px-8 py-3 bg-purple-600 hover:bg-purple-500 rounded-full font-bold">立即重開</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlay');
+        const winnerTextEl = document.getElementById('winner-text');
+        const reasonEl = document.getElementById('game-over-reason');
+        const restartTimerEl = document.getElementById('auto-restart-timer');
+
+        const gridSize = 20;
+        let tileCountX, tileCountY;
+        let isPaused = true;
+        let baseSpeed = 120;
+        let gameTimeout;
+        let restartCountdown;
+        let itemInterval;
+
+        let food = { x: 5, y: 5 };
+        let activeItems = []; // 存儲場上的道具
+
+        const ITEM_TYPES = {
+            LIFE: { emoji: '❤️', color: '#ef4444', chance: 0.3 },
+            SHIELD: { emoji: '🛡️', color: '#facc15', duration: 5000, chance: 0.4 },
+            SPEED: { emoji: '⚡', color: '#22d3ee', duration: 3000, chance: 0.3 }
+        };
+
+        let snake1 = createSnake('#4ade80', '#22c55e', '你', 3);
+        let aiSnake = createSnake('#60a5fa', '#3b82f6', '電腦 AI', tileCountX - 4);
+
+        function createSnake(color, headColor, name, startX) {
+            return {
+                body: [], dx: 0, dy: 0, nextDx: 0, nextDy: 0,
+                score: 0, hp: 1, color, headColor, name,
+                effects: { invincible: 0, fast: 0 }
+            };
+        }
+
+        function resizeCanvas() {
+            const containerWidth = Math.min(window.innerWidth - 40, 800);
+            const containerHeight = Math.min(window.innerHeight - 380, 500);
+            canvas.width = Math.floor(containerWidth / gridSize) * gridSize;
+            canvas.height = Math.floor(containerHeight / gridSize) * gridSize;
+            tileCountX = canvas.width / gridSize;
+            tileCountY = canvas.height / gridSize;
+            draw();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function initGame() {
+            snake1.body = [{x: 3, y: 5}, {x: 2, y: 5}, {x: 1, y: 5}];
+            snake1.score = 0; snake1.hp = 1; snake1.dx = 1; snake1.nextDx = 1; snake1.dy = 0; snake1.nextDy = 0;
+            snake1.effects = { invincible: 0, fast: 0 };
+
+            aiSnake.body = [{x: tileCountX-4, y: 10}, {x: tileCountX-3, y: 10}, {x: tileCountX-2, y: 10}];
+            aiSnake.score = 0; aiSnake.hp = 1; aiSnake.dx = -1; aiSnake.nextDx = -1; aiSnake.dy = 0; aiSnake.nextDy = 0;
+            aiSnake.effects = { invincible: 0, fast: 0 };
+
+            activeItems = [];
+            baseSpeed = 120;
+            createFood();
+            updateUI();
+        }
+
+        function createFood() {
+            food = { x: Math.floor(Math.random() * tileCountX), y: Math.floor(Math.random() * tileCountY) };
+        }
+
+        function spawnItem() {
+            if (isPaused) return;
+            const rand = Math.random();
+            let type;
+            if (rand < 0.3) type = 'LIFE';
+            else if (rand < 0.65) type = 'SHIELD';
+            else type = 'SPEED';
+
+            const newItem = {
+                x: Math.floor(Math.random() * tileCountX),
+                y: Math.floor(Math.random() * tileCountY),
+                type: type,
+                expires: Date.now() + 8000 // 道具在地面存在8秒
+            };
+            activeItems.push(newItem);
+        }
+
+        function updateUI() {
+            document.getElementById('score1').textContent = snake1.score;
+            document.getElementById('score2').textContent = aiSnake.score;
+            document.getElementById('hp1').textContent = `❤️ x${snake1.hp}`;
+            document.getElementById('hpAI').textContent = `❤️ x${aiSnake.hp}`;
+
+            const updateStatus = (snake, id) => {
+                const el = document.getElementById(id);
+                el.innerHTML = '';
+                if (snake.effects.invincible > Date.now()) {
+                    el.innerHTML += `<span class="status-badge bg-yellow-500 text-black">🛡️ 無敵</span>`;
+                }
+                if (snake.effects.fast > Date.now()) {
+                    el.innerHTML += `<span class="status-badge bg-cyan-500 text-black">⚡ 加速</span>`;
+                }
+            };
+            updateStatus(snake1, 'status1');
+            updateStatus(aiSnake, 'statusAI');
+        }
+
+        function updateAILogic() {
+            const head = aiSnake.body[0];
+            // AI 優先級：1. 救命(❤️) 2. 拿無敵 3. 吃食物
+            let target = food;
+            const lifeItem = activeItems.find(i => i.type === 'LIFE');
+            const shieldItem = activeItems.find(i => i.type === 'SHIELD');
+            if (lifeItem) target = lifeItem;
+            else if (shieldItem && aiSnake.effects.invincible < Date.now()) target = shieldItem;
+
+            const possibleMoves = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+            const isInvincible = aiSnake.effects.invincible > Date.now();
+
+            const safeMoves = possibleMoves.filter(m => {
+                const nx = head.x + m.dx, ny = head.y + m.dy;
+                if (!isInvincible) {
+                    if (nx < 0 || nx >= tileCountX || ny < 0 || ny >= tileCountY) return false;
+                    if (aiSnake.body.some(s => s.x === nx && s.y === ny)) return false;
+                    if (snake1.body.some(s => s.x === nx && s.y === ny)) return false;
+                }
+                if (m.dx === -aiSnake.dx && m.dy === -aiSnake.dy) return false;
+                return true;
+            });
+
+            if (safeMoves.length > 0) {
+                safeMoves.sort((a,b) => {
+                    const d1 = Math.abs(head.x+a.dx - target.x) + Math.abs(head.y+a.dy - target.y);
+                    const d2 = Math.abs(head.x+b.dx - target.x) + Math.abs(head.y+b.dy - target.y);
+                    return d1 - d2;
+                });
+                aiSnake.nextDx = safeMoves[0].dx;
+                aiSnake.nextDy = safeMoves[0].dy;
+            }
+        }
+
+        function handleCollision(snake, otherSnake) {
+            if (snake.effects.invincible > Date.now()) {
+                // 無敵狀態下穿透：將頭部座標修正為環繞或直接允許穿透（本例採穿透）
+                const head = snake.body[0];
+                if (head.x < 0) head.x = tileCountX - 1;
+                if (head.x >= tileCountX) head.x = 0;
+                if (head.y < 0) head.y = tileCountY - 1;
+                if (head.y >= tileCountY) head.y = 0;
+                return false;
+            }
+
+            const head = snake.body[0];
+            const hitWall = head.x < 0 || head.x >= tileCountX || head.y < 0 || head.y >= tileCountY;
+            const hitSelf = snake.body.slice(1).some(s => s.x === head.x && s.y === head.y);
+            const hitOther = otherSnake.body.some(s => s.x === head.x && s.y === head.y);
+
+            if (hitWall || hitSelf || hitOther) {
+                snake.hp--;
+                if (snake.hp <= 0) return true;
+                // 若還有命，原地重生感（暫時無敵 2 秒避免連續扣血）
+                snake.effects.invincible = Date.now() + 2000;
+                // 撞牆時彈回
+                if (hitWall) {
+                   if (head.x < 0) head.x = 0; if (head.x >= tileCountX) head.x = tileCountX-1;
+                   if (head.y < 0) head.y = 0; if (head.y >= tileCountY) head.y = tileCountY-1;
+                }
+            }
+            return false;
+        }
+
+        function update() {
+            if (isPaused) return;
+
+            updateAILogic();
+            snake1.dx = snake1.nextDx; snake1.dy = snake1.nextDy;
+            aiSnake.dx = aiSnake.nextDx; aiSnake.dy = aiSnake.nextDy;
+
+            const moveSnake = (s, other) => {
+                const head = { x: s.body[0].x + s.dx, y: s.body[0].y + s.dy };
+                s.body.unshift(head);
+                
+                // 檢查道具碰撞
+                activeItems = activeItems.filter(item => {
+                    if (head.x === item.x && head.y === item.y) {
+                        if (item.type === 'LIFE') s.hp++;
+                        else if (item.type === 'SHIELD') s.effects.invincible = Date.now() + ITEM_TYPES.SHIELD.duration;
+                        else if (item.type === 'SPEED') s.effects.fast = Date.now() + ITEM_TYPES.SPEED.duration;
+                        return false;
+                    }
+                    return item.expires > Date.now();
+                });
+
+                if (head.x === food.x && head.y === food.y) {
+                    s.score += 10; createFood();
+                } else {
+                    s.body.pop();
+                }
+            };
+
+            moveSnake(snake1, aiSnake);
+            moveSnake(aiSnake, snake1);
+
+            if (handleCollision(snake1, aiSnake)) return gameOver(snake1, "玩家生命值耗盡");
+            if (handleCollision(aiSnake, snake1)) return gameOver(aiSnake, "AI 生命值耗盡");
+            
+            updateUI();
+        }
+
+        function draw() {
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製食物
+            ctx.fillStyle = '#4ade80';
+            ctx.beginPath();
+            ctx.arc(food.x * gridSize + 10, food.y * gridSize + 10, 6, 0, Math.PI*2);
+            ctx.fill();
+
+            // 繪製道具
+            activeItems.forEach(item => {
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(ITEM_TYPES[item.type].emoji, item.x * gridSize + 10, item.y * gridSize + 15);
+            });
+
+            const renderSnake = (s) => {
+                const invinc = s.effects.invincible > Date.now();
+                s.body.forEach((seg, i) => {
+                    ctx.fillStyle = (i === 0) ? s.headColor : s.color;
+                    if (invinc && Math.floor(Date.now()/100) % 2 === 0) ctx.fillStyle = '#fde047'; // 閃爍金色
+                    ctx.beginPath();
+                    ctx.roundRect(seg.x * gridSize + 1, seg.y * gridSize + 1, gridSize - 2, gridSize - 2, 4);
+                    ctx.fill();
+                });
+            };
+            renderSnake(snake1);
+            renderSnake(aiSnake);
+        }
+
+        function gameOver(loser, reason) {
+            isPaused = true;
+            clearInterval(itemInterval);
+            clearTimeout(gameTimeout);
+            
+            overlay.style.display = 'flex';
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.remove('hidden');
+
+            winnerTextEl.textContent = (loser === aiSnake) ? "你贏了！" : "電腦 AI 贏了！";
+            winnerTextEl.style.color = (loser === aiSnake) ? snake1.headColor : aiSnake.headColor;
+            reasonEl.textContent = reason;
+
+            let sec = 3;
+            restartTimerEl.textContent = `將在 ${sec} 秒後自動開始...`;
+            restartCountdown = setInterval(() => {
+                sec--;
+                if (sec <= 0) { startGame(); }
+                else restartTimerEl.textContent = `將在 ${sec} 秒後自動開始...`;
+            }, 1000);
+        }
+
+        function startGame() {
+            clearInterval(restartCountdown);
+            clearInterval(itemInterval);
+            initGame();
+            isPaused = false;
+            overlay.style.display = 'none';
+            itemInterval = setInterval(spawnItem, 2000);
+            gameLoop();
+        }
+
+        function gameLoop() {
+            if (isPaused) return;
+            update();
+            draw();
+            // 計算當前速度 (若有加速效果則速度倍增)
+            let currentSpeed = baseSpeed;
+            if (snake1.effects.fast > Date.now() || aiSnake.effects.fast > Date.now()) currentSpeed = baseSpeed * 0.6;
+            gameTimeout = setTimeout(gameLoop, currentSpeed);
+        }
+
+        window.addEventListener('keydown', e => {
+            const k = e.key.toLowerCase();
+            if (k === 'w' && snake1.dy !== 1) { snake1.nextDx = 0; snake1.nextDy = -1; }
+            if (k === 's' && snake1.dy !== -1) { snake1.nextDx = 0; snake1.nextDy = 1; }
+            if (k === 'a' && snake1.dx !== 1) { snake1.nextDx = -1; snake1.nextDy = 0; }
+            if (k === 'd' && snake1.dx !== -1) { snake1.nextDx = 1; snake1.nextDy = 0; }
+        });
+
+        document.getElementById('start-btn').onclick = startGame;
+        document.getElementById('restart-btn').onclick = startGame;
+    </script>
+</body>
+</html>

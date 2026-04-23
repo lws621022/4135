@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>切水果大冒險</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #2c1a10;
+            touch-action: none;
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            color: white;
+            padding: 20px;
+        }
+        .game-over-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(44, 26, 16, 0.95);
+            padding: 2.5rem;
+            border-radius: 1.5rem;
+            text-align: center;
+            pointer-events: auto;
+            border: 4px solid #8b4513;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            display: none;
+        }
+        .wood-texture {
+            /* 模擬木頭質感的 CSS 疊加 */
+            background-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png');
+        }
+    </style>
+</head>
+<body class="wood-texture">
+
+    <div id="ui-layer">
+        <div class="flex justify-between items-start">
+            <div class="bg-black/30 backdrop-blur-sm p-3 rounded-xl border border-white/10">
+                <div class="text-sm uppercase tracking-widest opacity-70">Score</div>
+                <div class="text-3xl font-black text-yellow-400" id="score-val">0</div>
+            </div>
+            <div id="lives" class="text-3xl drop-shadow-md flex gap-2">
+                ❤️❤️❤️
+            </div>
+        </div>
+        
+        <!-- 遊戲結束視窗 -->
+        <div id="game-over" class="game-over-modal">
+            <h1 class="text-5xl font-black text-red-500 mb-4 italic">GAME OVER</h1>
+            <p class="text-2xl mb-8 text-yellow-100">得分: <span id="final-score" class="font-bold text-white">0</span></p>
+            <button onclick="resetGame()" class="bg-orange-600 hover:bg-orange-700 text-white font-black py-3 px-10 rounded-full transition-all transform hover:scale-105 shadow-lg uppercase">
+                再試一次
+            </button>
+        </div>
+
+        <!-- 開始畫面 -->
+        <div id="start-screen" class="game-over-modal" style="display: block;">
+            <h1 class="text-5xl font-black text-yellow-500 mb-2 italic">FRUIT SLICE</h1>
+            <p class="text-gray-300 mb-8">滑動手指，展現你的刀法！<br><span class="text-red-400 font-bold">避開炸彈 💣</span></p>
+            <button onclick="startGame()" class="bg-green-600 hover:bg-green-700 text-white font-black py-4 px-12 rounded-full transition-all transform hover:scale-105 shadow-xl uppercase tracking-widest">
+                開始挑戰
+            </button>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score-val');
+        const livesEl = document.getElementById('lives');
+        const gameOverEl = document.getElementById('game-over');
+        const finalScoreEl = document.getElementById('final-score');
+        const startScreenEl = document.getElementById('start-screen');
+
+        let score = 0;
+        let lives = 3;
+        let gameActive = false;
+        let fruits = [];
+        let particles = [];
+        let bladePath = [];
+        let lastTime = 0;
+        let spawnTimer = 0;
+        let spawnRate = 1200; 
+
+        const FRUIT_TYPES = [
+            { emoji: '🍎', color: '#ff4d4d' },
+            { emoji: '🍊', color: '#ffa500' },
+            { emoji: '🍉', color: '#2ecc71' },
+            { emoji: '🍍', color: '#f1c40f' },
+            { emoji: '🍓', color: '#e74c3c' },
+            { emoji: '🥝', color: '#27ae60' },
+            { emoji: '🍋', color: '#fff176' },
+            { emoji: '🍑', color: '#ffab91' }
+        ];
+
+        const BOMB_CHANCE = 0.18;
+
+        class Fruit {
+            constructor() {
+                this.isBomb = Math.random() < BOMB_CHANCE;
+                const type = FRUIT_TYPES[Math.floor(Math.random() * FRUIT_TYPES.length)];
+                this.emoji = this.isBomb ? '💣' : type.emoji;
+                this.color = this.isBomb ? '#ffcc00' : type.color;
+                
+                // 放大水果
+                this.radius = 55; // 從 40 放大到 55
+                this.x = Math.random() * (canvas.width - 150) + 75;
+                this.y = canvas.height + this.radius;
+                
+                this.vx = (Math.random() - 0.5) * 6;
+                this.vy = -(Math.random() * 6 + 13); // 稍微提高拋射高度
+                this.gravity = 0.22;
+                
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.12;
+                this.sliced = false;
+                this.sliceAngle = 0;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                this.rotation += this.rotationSpeed;
+
+                if (this.y > canvas.height + 150 && !this.sliced && !this.isBomb) {
+                    loseLife();
+                    return true;
+                }
+                return this.y > canvas.height + 150;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // 陰影效果
+                ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                ctx.shadowBlur = 15;
+                ctx.shadowOffsetY = 10;
+
+                ctx.font = '75px Arial'; // 字體放大
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                if (this.sliced && !this.isBomb) {
+                    // 切開的效果：左右偏移
+                    ctx.save();
+                    ctx.translate(-20, 0);
+                    ctx.rotate(-0.2);
+                    ctx.fillText(this.emoji, 0, 0);
+                    ctx.restore();
+                    
+                    ctx.save();
+                    ctx.translate(20, 0);
+                    ctx.rotate(0.2);
+                    ctx.fillText(this.emoji, 0, 0);
+                    ctx.restore();
+                } else {
+                    ctx.fillText(this.emoji, 0, 0);
+                }
+                ctx.restore();
+            }
+
+            checkSlice(x1, y1, x2, y2) {
+                if (this.sliced) return false;
+                const dist = this.distToSegment(this.x, this.y, x1, y1, x2, y2);
+                if (dist < this.radius) {
+                    this.sliced = true;
+                    if (this.isBomb) {
+                        explodeBomb();
+                    } else {
+                        score += 10;
+                        scoreEl.innerText = score;
+                        createParticles(this.x, this.y, this.color);
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            distToSegment(px, py, x1, y1, x2, y2) {
+                const l2 = (x1 - x2) ** 2 + (y1 - y2) ** 2;
+                if (l2 === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+                let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+                t = Math.max(0, Math.min(1, t));
+                return Math.sqrt((px - (x1 + t * (x2 - x1))) ** 2 + (py - (y1 + t * (y2 - y1))) ** 2);
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = (Math.random() - 0.5) * 15;
+                this.vy = (Math.random() - 0.5) * 15;
+                this.radius = Math.random() * 6 + 2;
+                this.alpha = 1;
+                this.gravity = 0.2;
+            }
+            update() {
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                this.alpha -= 0.02;
+                return this.alpha <= 0;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        function handleInput(e) {
+            if (!gameActive) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+            const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+
+            bladePath.push({ x, y, time: Date.now() });
+
+            if (bladePath.length > 1) {
+                const p1 = bladePath[bladePath.length - 2];
+                const p2 = bladePath[bladePath.length - 1];
+                fruits.forEach(fruit => {
+                    fruit.checkSlice(p1.x, p1.y, p2.x, p2.y);
+                });
+            }
+        }
+
+        window.addEventListener('mousemove', handleInput);
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            handleInput(e);
+        }, { passive: false });
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function loseLife() {
+            lives--;
+            updateLivesUI();
+            if (lives <= 0) endGame();
+        }
+
+        function explodeBomb() {
+            createParticles(canvas.width/2, canvas.height/2, '#ff4400');
+            lives = 0;
+            updateLivesUI();
+            endGame();
+        }
+
+        function updateLivesUI() {
+            livesEl.innerText = '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, 3 - lives));
+        }
+
+        function startGame() {
+            score = 0;
+            lives = 3;
+            fruits = [];
+            particles = [];
+            bladePath = [];
+            scoreEl.innerText = score;
+            updateLivesUI();
+            startScreenEl.style.display = 'none';
+            gameOverEl.style.display = 'none';
+            gameActive = true;
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function resetGame() {
+            startGame();
+        }
+
+        function endGame() {
+            gameActive = false;
+            finalScoreEl.innerText = score;
+            gameOverEl.style.display = 'block';
+        }
+
+        function drawBackground() {
+            // 木質底色
+            const grad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, canvas.width);
+            grad.addColorStop(0, '#5d341c');
+            grad.addColorStop(1, '#2c1a10');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製木紋線條 (裝飾感)
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 2;
+            for(let i = 0; i < canvas.width; i += 80) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.bezierCurveTo(i + 40, canvas.height/2, i - 40, canvas.height/2, i, canvas.height);
+                ctx.stroke();
+            }
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameActive) return;
+
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+
+            // 生成水果
+            spawnTimer += deltaTime;
+            if (spawnTimer > spawnRate) {
+                fruits.push(new Fruit());
+                spawnTimer = 0;
+                spawnRate = Math.max(500, 1200 - (score / 15));
+            }
+
+            // 更新水果
+            fruits = fruits.filter(fruit => {
+                const isDead = fruit.update();
+                fruit.draw();
+                return !isDead;
+            });
+
+            // 更新粒子
+            particles = particles.filter(p => {
+                const isDead = p.update();
+                p.draw();
+                return !isDead;
+            });
+
+            // 繪製刀刃路徑 (漸變流光感)
+            const now = Date.now();
+            bladePath = bladePath.filter(p => now - p.time < 150);
+            
+            if (bladePath.length > 2) {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'white';
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 6;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.moveTo(bladePath[0].x, bladePath[0].y);
+                for (let i = 1; i < bladePath.length; i++) {
+                    ctx.lineTo(bladePath[i].x, bladePath[i].y);
+                }
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        updateLivesUI();
+    </script>
+</body>
+</html>

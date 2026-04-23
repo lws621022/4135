@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>經典俄羅斯方塊</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            border: 4px solid #333;
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+        }
+        .ghost {
+            opacity: 0.2;
+        }
+        .controls-hint {
+            color: #888;
+            font-size: 0.8rem;
+        }
+        #message-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="flex flex-col md:flex-row gap-8 items-start">
+        <!-- 遊戲主體 -->
+        <div id="game-container" class="rounded-lg overflow-hidden">
+            <canvas id="tetris"></canvas>
+            
+            <!-- 訊息提示層 (遊戲結束/暫停) -->
+            <div id="message-overlay">
+                <h2 id="overlay-title" class="text-4xl font-bold mb-4 text-red-500">遊戲結束</h2>
+                <p id="overlay-score" class="text-xl mb-6">得分: 0</p>
+                <button id="restart-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-full font-bold transition-all">
+                    重新開始
+                </button>
+            </div>
+        </div>
+
+        <!-- 側邊欄：資訊與控制 -->
+        <div class="flex flex-col gap-6 w-48">
+            <div class="bg-zinc-800 p-4 rounded-xl shadow-lg">
+                <p class="text-zinc-400 text-sm uppercase tracking-wider mb-1">下一個</p>
+                <canvas id="next" width="100" height="100"></canvas>
+            </div>
+
+            <div class="bg-zinc-800 p-4 rounded-xl shadow-lg">
+                <p class="text-zinc-400 text-sm uppercase tracking-wider mb-1">分數</p>
+                <p id="score" class="text-3xl font-mono font-bold text-yellow-400">0</p>
+            </div>
+
+            <div class="bg-zinc-800 p-4 rounded-xl shadow-lg">
+                <p class="text-zinc-400 text-sm uppercase tracking-wider mb-1">等級</p>
+                <p id="level" class="text-3xl font-mono font-bold text-blue-400">1</p>
+            </div>
+
+            <div class="hidden md:block bg-zinc-800 p-4 rounded-xl shadow-lg">
+                <p class="text-zinc-400 text-sm uppercase tracking-wider mb-2">控制說明</p>
+                <ul class="controls-hint space-y-1">
+                    <li>← → : 左右移動</li>
+                    <li>↑ : 旋轉方塊</li>
+                    <li>↓ : 加速下落</li>
+                    <li>空格 : 直接掉落</li>
+                    <li>P : 暫停</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 行動裝置按鈕 (僅在小螢幕顯示) -->
+    <div class="grid grid-cols-3 gap-2 mt-8 md:hidden">
+        <button class="bg-zinc-700 p-4 rounded" onpointerdown="moveHandler('left')">←</button>
+        <button class="bg-zinc-700 p-4 rounded" onpointerdown="moveHandler('rotate')">↻</button>
+        <button class="bg-zinc-700 p-4 rounded" onpointerdown="moveHandler('right')">→</button>
+        <button class="bg-zinc-700 p-4 rounded col-span-3" onpointerdown="moveHandler('drop')">快速下落</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('tetris');
+        const context = canvas.getContext('2d');
+        const nextCanvas = document.getElementById('next');
+        const nextContext = nextCanvas.getContext('2d');
+
+        const GRID_WIDTH = 10;
+        const GRID_HEIGHT = 20;
+        const BLOCK_SIZE = 30;
+
+        canvas.width = GRID_WIDTH * BLOCK_SIZE;
+        canvas.height = GRID_HEIGHT * BLOCK_SIZE;
+
+        context.scale(BLOCK_SIZE, BLOCK_SIZE);
+        nextContext.scale(25, 25);
+
+        // 方塊形狀定義
+        const PIECES = 'ILJOTSZ';
+        const COLORS = [
+            null,
+            '#00f0f0', // I - 青色
+            '#0000f0', // J - 藍色
+            '#f0a000', // L - 橘色
+            '#f0f000', // O - 黃色
+            '#00f000', // S - 綠色
+            '#a000f0', // T - 紫色
+            '#f00000'  // Z - 紅色
+        ];
+
+        function createPiece(type) {
+            if (type === 'I') {
+                return [
+                    [0, 1, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 1, 0, 0],
+                ];
+            } else if (type === 'L') {
+                return [
+                    [0, 2, 0],
+                    [0, 2, 0],
+                    [0, 2, 2],
+                ];
+            } else if (type === 'J') {
+                return [
+                    [0, 3, 0],
+                    [0, 3, 0],
+                    [3, 3, 0],
+                ];
+            } else if (type === 'O') {
+                return [
+                    [4, 4],
+                    [4, 4],
+                ];
+            } else if (type === 'Z') {
+                return [
+                    [5, 5, 0],
+                    [0, 5, 5],
+                    [0, 0, 0],
+                ];
+            } else if (type === 'S') {
+                return [
+                    [0, 6, 6],
+                    [6, 6, 0],
+                    [0, 0, 0],
+                ];
+            } else if (type === 'T') {
+                return [
+                    [0, 7, 0],
+                    [7, 7, 7],
+                    [0, 0, 0],
+                ];
+            }
+        }
+
+        // 碰撞檢測
+        function collide(arena, player) {
+            const [m, o] = [player.matrix, player.pos];
+            for (let y = 0; y < m.length; ++y) {
+                for (let x = 0; x < m[y].length; ++x) {
+                    if (m[y][x] !== 0 &&
+                       (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function createMatrix(w, h) {
+            const matrix = [];
+            while (h--) {
+                matrix.push(new Array(w).fill(0));
+            }
+            return matrix;
+        }
+
+        function draw() {
+            // 清除畫布
+            context.fillStyle = '#000';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製背景網格 (選擇性)
+            context.lineWidth = 0.02;
+            context.strokeStyle = '#333';
+            for(let i=0; i<GRID_WIDTH; i++) {
+                context.beginPath(); context.moveTo(i, 0); context.lineTo(i, GRID_HEIGHT); context.stroke();
+            }
+            for(let i=0; i<GRID_HEIGHT; i++) {
+                context.beginPath(); context.moveTo(0, i); context.lineTo(GRID_WIDTH, i); context.stroke();
+            }
+
+            drawMatrix(arena, {x: 0, y: 0});
+            drawGhost(); // 繪製落點提示
+            drawMatrix(player.matrix, player.pos);
+        }
+
+        function drawMatrix(matrix, offset) {
+            matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        context.fillStyle = COLORS[value];
+                        context.fillRect(x + offset.x, y + offset.y, 1, 1);
+                        
+                        // 加入邊框效果
+                        context.lineWidth = 0.05;
+                        context.strokeStyle = 'rgba(255,255,255,0.3)';
+                        context.strokeRect(x + offset.x, y + offset.y, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function drawGhost() {
+            const ghost = {
+                pos: {x: player.pos.x, y: player.pos.y},
+                matrix: player.matrix
+            };
+            while (!collide(arena, ghost)) {
+                ghost.pos.y++;
+            }
+            ghost.pos.y--;
+            
+            // 繪製半透明虛影
+            ghost.matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        context.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                        context.fillRect(x + ghost.pos.x, y + ghost.pos.y, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function drawNext() {
+            nextContext.fillStyle = '#27272a';
+            nextContext.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+            
+            const m = nextPiece;
+            const offsetX = (4 - m[0].length) / 2;
+            const offsetY = (4 - m.length) / 2;
+            
+            m.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        nextContext.fillStyle = COLORS[value];
+                        nextContext.fillRect(x + offsetX, y + offsetY, 1, 1);
+                        nextContext.strokeStyle = 'rgba(255,255,255,0.3)';
+                        nextContext.strokeRect(x + offsetX, y + offsetY, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function merge(arena, player) {
+            player.matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        arena[y + player.pos.y][x + player.pos.x] = value;
+                    }
+                });
+            });
+        }
+
+        function rotate(matrix, dir) {
+            for (let y = 0; y < matrix.length; ++y) {
+                for (let x = 0; x < y; ++x) {
+                    [
+                        matrix[x][y],
+                        matrix[y][x],
+                    ] = [
+                        matrix[y][x],
+                        matrix[x][y],
+                    ];
+                }
+            }
+            if (dir > 0) {
+                matrix.forEach(row => row.reverse());
+            } else {
+                matrix.reverse();
+            }
+        }
+
+        function arenaSweep() {
+            let rowCount = 1;
+            outer: for (let y = arena.length - 1; y > 0; --y) {
+                for (let x = 0; x < arena[y].length; ++x) {
+                    if (arena[y][x] === 0) {
+                        continue outer;
+                    }
+                }
+                const row = arena.splice(y, 1)[0].fill(0);
+                arena.unshift(row);
+                ++y;
+
+                player.score += rowCount * 10;
+                rowCount *= 2;
+            }
+            updateScore();
+        }
+
+        function playerDrop() {
+            player.pos.y++;
+            if (collide(arena, player)) {
+                player.pos.y--;
+                merge(arena, player);
+                playerReset();
+                arenaSweep();
+                updateScore();
+            }
+            dropCounter = 0;
+        }
+
+        function playerHardDrop() {
+            while (!collide(arena, player)) {
+                player.pos.y++;
+            }
+            player.pos.y--;
+            merge(arena, player);
+            playerReset();
+            arenaSweep();
+            updateScore();
+            dropCounter = 0;
+        }
+
+        function playerMove(dir) {
+            player.pos.x += dir;
+            if (collide(arena, player)) {
+                player.pos.x -= dir;
+            }
+        }
+
+        function playerReset() {
+            player.matrix = nextPiece;
+            nextPiece = createPiece(PIECES[PIECES.length * Math.random() | 0]);
+            player.pos.y = 0;
+            player.pos.x = (arena[0].length / 2 | 0) -
+                           (player.matrix[0].length / 2 | 0);
+            
+            if (collide(arena, player)) {
+                gameOver();
+            }
+            drawNext();
+        }
+
+        function playerRotate(dir) {
+            const pos = player.pos.x;
+            let offset = 1;
+            rotate(player.matrix, dir);
+            while (collide(arena, player)) {
+                player.pos.x += offset;
+                offset = -(offset + (offset > 0 ? 1 : -1));
+                if (offset > player.matrix[0].length) {
+                    rotate(player.matrix, -dir);
+                    player.pos.x = pos;
+                    return;
+                }
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('score').innerText = player.score;
+            const level = Math.floor(player.score / 100) + 1;
+            document.getElementById('level').innerText = level;
+            dropInterval = Math.max(100, 1000 - (level - 1) * 100);
+        }
+
+        function gameOver() {
+            gamePaused = true;
+            document.getElementById('overlay-title').innerText = "遊戲結束";
+            document.getElementById('overlay-score').innerText = "最終得分: " + player.score;
+            document.getElementById('message-overlay').style.display = 'flex';
+        }
+
+        let dropCounter = 0;
+        let dropInterval = 1000;
+        let lastTime = 0;
+        let gamePaused = false;
+
+        function update(time = 0) {
+            if (gamePaused) return;
+
+            const deltaTime = time - lastTime;
+            lastTime = time;
+
+            dropCounter += deltaTime;
+            if (dropCounter > dropInterval) {
+                playerDrop();
+            }
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        const arena = createMatrix(GRID_WIDTH, GRID_HEIGHT);
+
+        const player = {
+            pos: {x: 0, y: 0},
+            matrix: null,
+            score: 0,
+        };
+
+        let nextPiece = createPiece(PIECES[PIECES.length * Math.random() | 0]);
+
+        // 控制處理器
+        function moveHandler(action) {
+            if (gamePaused && action !== 'restart') return;
+            
+            switch(action) {
+                case 'left': playerMove(-1); break;
+                case 'right': playerMove(1); break;
+                case 'rotate': playerRotate(1); break;
+                case 'drop': playerDrop(); break;
+                case 'hardDrop': playerHardDrop(); break;
+                case 'pause': 
+                    gamePaused = !gamePaused;
+                    if(!gamePaused) {
+                        document.getElementById('message-overlay').style.display = 'none';
+                        update();
+                    } else {
+                        document.getElementById('overlay-title').innerText = "遊戲暫停";
+                        document.getElementById('overlay-score').innerText = "目前得分: " + player.score;
+                        document.getElementById('message-overlay').style.display = 'flex';
+                    }
+                    break;
+            }
+        }
+
+        document.addEventListener('keydown', event => {
+            if (event.keyCode === 37) {
+                moveHandler('left');
+            } else if (event.keyCode === 39) {
+                moveHandler('right');
+            } else if (event.keyCode === 40) {
+                moveHandler('drop');
+            } else if (event.keyCode === 38) {
+                moveHandler('rotate');
+            } else if (event.keyCode === 32) {
+                moveHandler('hardDrop');
+            } else if (event.keyCode === 80) { // P key
+                moveHandler('pause');
+            }
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            arena.forEach(row => row.fill(0));
+            player.score = 0;
+            gamePaused = false;
+            document.getElementById('message-overlay').style.display = 'none';
+            playerReset();
+            updateScore();
+            update();
+        });
+
+        // 初始化
+        playerReset();
+        updateScore();
+        update();
+
+    </script>
+</body>
+</html>

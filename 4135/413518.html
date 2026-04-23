@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 俄羅斯方塊 - 連續消除版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+            transition: background 1s ease;
+            background-color: #1a202c;
+        }
+        #game-container {
+            background-color: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(5px);
+            border-radius: 1rem;
+            padding: 2rem;
+        }
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            grid-template-rows: repeat(10, 1fr);
+            gap: 1px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            width: 300px;
+            height: 300px;
+        }
+        .cell {
+            background-color: rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            border-radius: 2px;
+            transition: all 0.2s;
+        }
+        #next-piece {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(4, 1fr);
+            gap: 1px;
+            background-color: rgba(255, 255, 255, 0.1);
+            width: 80px;
+            height: 80px;
+        }
+        .control-btn {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .combo-anim {
+            animation: comboPop 0.4s ease-out;
+        }
+        @keyframes comboPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); color: #fbbf24; }
+            100% { transform: scale(1); }
+        }
+        .perfect-clear-anim {
+            animation: flash 0.5s ease-out 3;
+        }
+        @keyframes flash {
+            0%, 100% { background-color: transparent; }
+            50% { background-color: rgba(255, 255, 255, 0.8); }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div id="game-container" class="flex flex-col items-center shadow-2xl">
+        <div class="mb-4 text-center">
+            <h1 class="text-3xl font-bold mb-2">🧩 Emoji Tetris</h1>
+            <div class="flex flex-wrap gap-4 justify-center text-xl">
+                <p>得分: <span id="score" class="font-mono">0</span></p>
+                <p>等級: <span id="level" class="font-mono">1</span></p>
+                <p>主題: <span id="theme-name" class="text-yellow-400 font-bold">經典</span></p>
+            </div>
+            <!-- Combo 顯示區 -->
+            <div id="combo-container" class="h-8 mt-2">
+                <span id="combo-text" class="hidden text-2xl font-black text-orange-400 italic">COMBO x1 !!</span>
+            </div>
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-8 items-start">
+            <div class="relative">
+                <div id="game-board"></div>
+                
+                <!-- 全清空提示 -->
+                <div id="perfect-clear-msg" class="hidden absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-500 text-black font-black py-2 px-4 rounded transform rotate-[-5deg] z-20 shadow-xl border-2 border-white text-center">
+                    PERFECT CLEAR!! 🌈<br>背景與型態進化！
+                </div>
+
+                <div id="game-over" class="hidden absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-center z-30 rounded">
+                    <h2 class="text-2xl font-bold mb-4">遊戲結束! 💀</h2>
+                    <button onclick="resetGame()" class="bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-full font-bold transition">再玩一次</button>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-4">
+                <div class="bg-black bg-opacity-30 p-4 rounded-lg">
+                    <p class="mb-2 text-sm text-gray-300 uppercase tracking-widest text-center">下一個</p>
+                    <div id="next-piece"></div>
+                </div>
+                
+                <button id="start-btn" onclick="toggleGame()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition">
+                    開始遊戲
+                </button>
+            </div>
+        </div>
+
+        <!-- 手機控制 -->
+        <div class="grid grid-cols-3 gap-2 mt-8 md:hidden">
+            <div></div>
+            <button class="control-btn bg-white bg-opacity-20 p-4 rounded-lg text-2xl" onclick="handleControl('up')">⬆️</button>
+            <div></div>
+            <button class="control-btn bg-white bg-opacity-20 p-4 rounded-lg text-2xl" onclick="handleControl('left')">⬅️</button>
+            <button class="control-btn bg-white bg-opacity-20 p-4 rounded-lg text-2xl" onclick="handleControl('down')">⬇️</button>
+            <button class="control-btn bg-white bg-opacity-20 p-4 rounded-lg text-2xl" onclick="handleControl('right')">➡️</button>
+        </div>
+
+        <div class="mt-8 text-gray-300 text-sm italic text-center">
+            提示：連續消除可獲得 Combo 加成！<br>
+            Combo 越高，分數翻倍越快！
+        </div>
+    </div>
+
+    <script>
+        const BOARD_WIDTH = 10;
+        const BOARD_HEIGHT = 10;
+        const boardElement = document.getElementById('game-board');
+        const nextElement = document.getElementById('next-piece');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+        const themeNameElement = document.getElementById('theme-name');
+        const comboTextElement = document.getElementById('combo-text');
+        const gameOverScreen = document.getElementById('game-over');
+        const perfectClearMsg = document.getElementById('perfect-clear-msg');
+        const startBtn = document.getElementById('start-btn');
+
+        const THEMES = [
+            { name: '經典', emojis: ['🟦', '💙', '🧡', '🟨', '💚', '💜', '❤️'], bg: '#1a202c' },
+            { name: '水果', emojis: ['🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇'], bg: '#2d5a27' },
+            { name: '海洋', emojis: ['🐙', '🐡', '🐠', '🐬', '🐳', '🦀', '🦈'], bg: '#1a365d' },
+            { name: '科技', emojis: ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '⚪'], bg: '#2d3748' },
+            { name: '自然', emojis: ['🌸', '🌲', '🍀', '🌵', '🌻', '🍂', '🍄'], bg: '#4a3728' }
+        ];
+
+        let currentThemeIndex = 0;
+
+        const PIECES_DATA = {
+            'I': [[1,1,1,1]],
+            'J': [[1,0,0], [1,1,1]],
+            'L': [[0,0,1], [1,1,1]],
+            'O': [[1,1], [1,1]],
+            'S': [[0,1,1], [1,1,0]],
+            'T': [[0,1,0], [1,1,1]],
+            'Z': [[1,1,0], [0,1,1]]
+        };
+        const PIECE_KEYS = Object.keys(PIECES_DATA);
+
+        let board = [];
+        let currentPiece = null;
+        let nextPiece = null;
+        let score = 0;
+        let level = 1;
+        let combo = 0; // 當前 Combo 數
+        let gameInterval = null;
+        let isPaused = true;
+
+        function updateTheme() {
+            const theme = THEMES[currentThemeIndex];
+            themeNameElement.innerText = theme.name;
+            document.body.style.backgroundColor = theme.bg;
+        }
+
+        function initBoard() {
+            board = Array(BOARD_HEIGHT).fill().map(() => Array(BOARD_WIDTH).fill(null));
+            renderBoard();
+            updateTheme();
+        }
+
+        function renderBoard() {
+            boardElement.innerHTML = '';
+            for (let y = 0; y < BOARD_HEIGHT; y++) {
+                for (let x = 0; x < BOARD_WIDTH; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (board[y][x]) {
+                        cell.innerText = board[y][x];
+                    }
+                    
+                    if (currentPiece) {
+                        const { shape, x: px, y: py, emoji } = currentPiece;
+                        for (let sy = 0; sy < shape.length; sy++) {
+                            for (let sx = 0; sx < shape[sy].length; sx++) {
+                                if (shape[sy][sx] && py + sy === y && px + sx === x) {
+                                    cell.innerText = emoji;
+                                }
+                            }
+                        }
+                    }
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function renderNext() {
+            nextElement.innerHTML = '';
+            const { shape, emoji } = nextPiece;
+            for (let y = 0; y < 4; y++) {
+                for (let x = 0; x < 4; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell text-xs';
+                    if (shape[y] && shape[y][x]) {
+                        cell.innerText = emoji;
+                    }
+                    nextElement.appendChild(cell);
+                }
+            }
+        }
+
+        function createPiece() {
+            const index = Math.floor(Math.random() * PIECE_KEYS.length);
+            const key = PIECE_KEYS[index];
+            const shape = PIECES_DATA[key];
+            const emoji = THEMES[currentThemeIndex].emojis[index];
+            
+            return {
+                shape: shape,
+                emoji: emoji,
+                x: Math.floor((BOARD_WIDTH - shape[0].length) / 2),
+                y: 0
+            };
+        }
+
+        function movePiece(dx, dy) {
+            if (isPaused) return;
+            if (dy === -1 && dx === 0) {
+                rotatePiece();
+                return;
+            }
+
+            if (!checkCollision(currentPiece.x + dx, currentPiece.y + dy, currentPiece.shape)) {
+                currentPiece.x += dx;
+                currentPiece.y += dy;
+                renderBoard();
+                return true;
+            } else if (dy > 0) {
+                lockPiece();
+                return false;
+            }
+            return false;
+        }
+
+        function rotatePiece() {
+            const rotated = currentPiece.shape[0].map((_, index) =>
+                currentPiece.shape.map(row => row[index]).reverse()
+            );
+            if (!checkCollision(currentPiece.x, currentPiece.y, rotated)) {
+                currentPiece.shape = rotated;
+                renderBoard();
+            }
+        }
+
+        function checkCollision(x, y, shape) {
+            for (let sy = 0; sy < shape.length; sy++) {
+                for (let sx = 0; sx < shape[sy].length; sx++) {
+                    if (shape[sy][sx]) {
+                        const nextX = x + sx;
+                        const nextY = y + sy;
+                        if (nextX < 0 || nextX >= BOARD_WIDTH || nextY >= BOARD_HEIGHT || (nextY >= 0 && board[nextY][nextX])) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function lockPiece() {
+            const { shape, x, y, emoji } = currentPiece;
+            shape.forEach((row, sy) => {
+                row.forEach((value, sx) => {
+                    if (value) {
+                        if (y + sy < 0) {
+                            gameOver();
+                            return;
+                        }
+                        board[y + sy][x + sx] = emoji;
+                    }
+                });
+            });
+
+            // 核心邏輯：是否有消除行
+            const linesBefore = linesToClear();
+            if (linesBefore > 0) {
+                combo++;
+                clearLines(linesBefore);
+                showCombo();
+            } else {
+                combo = 0; // 重置 Combo
+                hideCombo();
+            }
+
+            checkPerfectClear();
+
+            currentPiece = nextPiece;
+            nextPiece = createPiece();
+            renderNext();
+
+            if (checkCollision(currentPiece.x, currentPiece.y, currentPiece.shape)) {
+                gameOver();
+            }
+            renderBoard();
+        }
+
+        function linesToClear() {
+            let count = 0;
+            for (let y = 0; y < BOARD_HEIGHT; y++) {
+                if (board[y].every(cell => cell !== null)) count++;
+            }
+            return count;
+        }
+
+        function clearLines(numLines) {
+            for (let y = BOARD_HEIGHT - 1; y >= 0; y--) {
+                if (board[y].every(cell => cell !== null)) {
+                    board.splice(y, 1);
+                    board.unshift(Array(BOARD_WIDTH).fill(null));
+                    y++; 
+                }
+            }
+            
+            // 得分計算：基礎分 * (Combo 加成)
+            const basePoints = [0, 100, 300, 500, 800][numLines] || 0;
+            const comboMultiplier = combo > 1 ? combo : 1;
+            const pointsGained = basePoints * comboMultiplier;
+            
+            score += pointsGained;
+            scoreElement.innerText = score;
+            
+            if (score > level * 1000) {
+                level++;
+                levelElement.innerText = level;
+                resetInterval();
+            }
+        }
+
+        function showCombo() {
+            if (combo > 1) {
+                comboTextElement.innerText = `COMBO x${combo} !!`;
+                comboTextElement.classList.remove('hidden', 'combo-anim');
+                void comboTextElement.offsetWidth; // 強制重繪觸發動畫
+                comboTextElement.classList.add('combo-anim');
+            }
+        }
+
+        function hideCombo() {
+            comboTextElement.classList.add('hidden');
+        }
+
+        function checkPerfectClear() {
+            const isEmpty = board.every(row => row.every(cell => cell === null));
+            if (isEmpty) {
+                score += 2000;
+                scoreElement.innerText = score;
+                currentThemeIndex = (currentThemeIndex + 1) % THEMES.length;
+                updateTheme();
+                boardElement.classList.add('perfect-clear-anim');
+                perfectClearMsg.classList.remove('hidden');
+                setTimeout(() => {
+                    boardElement.classList.remove('perfect-clear-anim');
+                    perfectClearMsg.classList.add('hidden');
+                }, 2000);
+
+                const updateEmojiForPiece = (piece) => {
+                    if (!piece) return;
+                    const pieceKey = Object.keys(PIECES_DATA).find(k => 
+                        JSON.stringify(PIECES_DATA[k]) === JSON.stringify(piece.shape)
+                    );
+                    const idx = PIECE_KEYS.indexOf(pieceKey);
+                    piece.emoji = THEMES[currentThemeIndex].emojis[idx];
+                };
+                updateEmojiForPiece(currentPiece);
+                updateEmojiForPiece(nextPiece);
+                renderNext();
+            }
+        }
+
+        function gameOver() {
+            isPaused = true;
+            clearInterval(gameInterval);
+            gameOverScreen.classList.remove('hidden');
+            combo = 0;
+            hideCombo();
+        }
+
+        function resetGame() {
+            currentThemeIndex = 0;
+            initBoard();
+            score = 0;
+            level = 1;
+            combo = 0;
+            scoreElement.innerText = score;
+            levelElement.innerText = level;
+            hideCombo();
+            gameOverScreen.classList.add('hidden');
+            currentPiece = createPiece();
+            nextPiece = createPiece();
+            renderNext();
+            isPaused = false;
+            startBtn.innerText = '暫停遊戲';
+            resetInterval();
+        }
+
+        function toggleGame() {
+            if (!gameOverScreen.classList.contains('hidden')) {
+                resetGame();
+                return;
+            }
+            if (isPaused) {
+                if (!currentPiece) {
+                    currentPiece = createPiece();
+                    nextPiece = createPiece();
+                    renderNext();
+                }
+                isPaused = false;
+                startBtn.innerText = '暫停遊戲';
+                resetInterval();
+            } else {
+                isPaused = true;
+                startBtn.innerText = '繼續遊戲';
+                clearInterval(gameInterval);
+            }
+        }
+
+        function resetInterval() {
+            clearInterval(gameInterval);
+            const speed = Math.max(100, 800 - (level - 1) * 100);
+            gameInterval = setInterval(() => {
+                if (!isPaused) movePiece(0, 1);
+            }, speed);
+        }
+
+        function handleControl(dir) {
+            if (isPaused) return;
+            switch(dir) {
+                case 'left': movePiece(-1, 0); break;
+                case 'right': movePiece(1, 0); break;
+                case 'down': movePiece(0, 1); break;
+                case 'up': movePiece(0, -1); break;
+            }
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (isPaused) return;
+            switch(e.key) {
+                case 'ArrowLeft': handleControl('left'); break;
+                case 'ArrowRight': handleControl('right'); break;
+                case 'ArrowDown': handleControl('down'); break;
+                case 'ArrowUp': handleControl('up'); break;
+            }
+        });
+
+        initBoard();
+    </script>
+</body>
+</html>

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水果接接樂 Fruit Catcher</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #87CEEB, #E0F7FA);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            background-color: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            max-width: 100%;
+            max-height: 100%;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .stats-box {
+            background: rgba(255, 255, 255, 0.8);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 1.25rem;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            color: #333;
+        }
+        #modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 2rem;
+            border-radius: 1.5rem;
+            text-align: center;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            display: none;
+            min-width: 300px;
+        }
+        .btn {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            margin-top: 1rem;
+            pointer-events: auto;
+        }
+        .btn:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div class="ui-overlay">
+        <div class="stats-box">🍎 分數: <span id="score">0</span></div>
+        <div class="stats-box">❤️ 生命: <span id="lives">3</span></div>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- 遊戲結束/開始 視窗 -->
+    <div id="modal">
+        <h2 id="modal-title" class="text-2xl font-bold mb-4">水果接接樂</h2>
+        <p id="modal-text" class="mb-6">滑動或使用左右鍵移動籃子，接住水果吧！</p>
+        <button id="start-btn" class="btn">開始遊戲</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const livesElement = document.getElementById('lives');
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalText = document.getElementById('modal-text');
+    const startBtn = document.getElementById('start-btn');
+
+    // 遊戲參數
+    let score = 0;
+    let lives = 3;
+    let gameActive = false;
+    let fruits = [];
+    let particles = [];
+    let frameCount = 0;
+    let spawnRate = 60; // 幾幀產生一個水果
+    let gameSpeed = 3;
+
+    // 籃子設定
+    const basket = {
+        width: 100,
+        height: 60,
+        x: 0,
+        y: 0,
+        emoji: '🧺',
+        speed: 15
+    };
+
+    // 水果池 (種類, 分數)
+    const fruitTypes = [
+        { emoji: '🍎', score: 10 },
+        { emoji: '🍊', score: 10 },
+        { emoji: '🍓', score: 20 },
+        { emoji: '🍇', score: 15 },
+        { emoji: '🍉', score: 30 },
+        { emoji: '🍍', score: 25 },
+        { emoji: '🥝', score: 15 }
+    ];
+
+    // 初始化畫布尺寸
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        basket.y = canvas.height - 100;
+        if (!gameActive) {
+            basket.x = canvas.width / 2 - basket.width / 2;
+        }
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // 控制邏輯
+    let keys = {};
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    // 觸控與滑鼠邏輯
+    function handleMove(clientX) {
+        if (!gameActive) return;
+        basket.x = clientX - basket.width / 2;
+        // 邊界檢查
+        if (basket.x < 0) basket.x = 0;
+        if (basket.x > canvas.width - basket.width) basket.x = canvas.width - basket.width;
+    }
+
+    canvas.addEventListener('mousemove', e => handleMove(e.clientX));
+    canvas.addEventListener('touchmove', e => {
+        e.preventDefault();
+        handleMove(e.touches[0].clientX);
+    }, { passive: false });
+
+    // 遊戲物件類別
+    class Fruit {
+        constructor() {
+            const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+            this.emoji = type.emoji;
+            this.points = type.score;
+            this.size = 40;
+            this.x = Math.random() * (canvas.width - this.size);
+            this.y = -this.size;
+            this.speed = gameSpeed + Math.random() * 2;
+            this.rotation = Math.random() * Math.PI * 2;
+            this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+        }
+
+        update() {
+            this.y += this.speed;
+            this.rotation += this.rotationSpeed;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x + this.size / 2, this.y + this.size / 2);
+            ctx.rotate(this.rotation);
+            ctx.font = `${this.size}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(this.emoji, 0, 0);
+            ctx.restore();
+        }
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x;
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 10;
+            this.vy = (Math.random() - 0.5) * 10;
+            this.alpha = 1;
+            this.color = color || '#FFEB3B';
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.alpha -= 0.02;
+        }
+        draw() {
+            ctx.globalAlpha = this.alpha;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    function createExplosion(x, y) {
+        for (let i = 0; i < 8; i++) {
+            particles.push(new Particle(x, y));
+        }
+    }
+
+    function resetGame() {
+        score = 0;
+        lives = 3;
+        fruits = [];
+        particles = [];
+        gameSpeed = 3;
+        spawnRate = 60;
+        scoreElement.textContent = score;
+        livesElement.textContent = lives;
+        modal.style.display = 'none';
+        gameActive = true;
+        animate();
+    }
+
+    function gameOver() {
+        gameActive = false;
+        modalTitle.textContent = "遊戲結束！";
+        modalText.textContent = `最終得分：${score}`;
+        startBtn.textContent = "再玩一次";
+        modal.style.display = 'block';
+    }
+
+    function update() {
+        if (!gameActive) return;
+
+        // 鍵盤移動
+        if (keys['ArrowLeft'] && basket.x > 0) basket.x -= basket.speed;
+        if (keys['ArrowRight'] && basket.x < canvas.width - basket.width) basket.x += basket.speed;
+
+        // 水果生成
+        frameCount++;
+        if (frameCount % Math.max(15, spawnRate) === 0) {
+            fruits.push(new Fruit());
+        }
+
+        // 難度增加
+        if (score > 0 && score % 100 === 0 && spawnRate > 15) {
+            spawnRate -= 0.1;
+            gameSpeed += 0.005;
+        }
+
+        // 水果更新
+        for (let i = fruits.length - 1; i >= 0; i--) {
+            const f = fruits[i];
+            f.update();
+
+            // 碰撞檢測 (簡單的矩形碰撞)
+            if (f.y + f.size > basket.y && 
+                f.y < basket.y + basket.height &&
+                f.x + f.size > basket.x && 
+                f.x < basket.x + basket.width) {
+                
+                score += f.points;
+                scoreElement.textContent = score;
+                createExplosion(f.x + f.size/2, f.y + f.size/2);
+                fruits.splice(i, 1);
+                continue;
+            }
+
+            // 掉出畫面
+            if (f.y > canvas.height) {
+                lives--;
+                livesElement.textContent = lives;
+                fruits.splice(i, 1);
+                if (lives <= 0) {
+                    gameOver();
+                }
+            }
+        }
+
+        // 粒子更新
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].alpha <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 畫籃子
+        ctx.font = `${basket.height}px Arial`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(basket.emoji, basket.x, basket.y);
+
+        // 畫水果
+        fruits.forEach(f => f.draw());
+
+        // 畫粒子
+        particles.forEach(p => p.draw());
+    }
+
+    function animate() {
+        if (!gameActive) return;
+        update();
+        draw();
+        requestAnimationFrame(animate);
+    }
+
+    startBtn.onclick = resetGame;
+
+    // 初始顯示
+    modal.style.display = 'block';
+    draw();
+
+</script>
+</body>
+</html>

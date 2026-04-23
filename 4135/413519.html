@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji 貪吃蛇 - 經典鍵盤版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --grid-color: #16213e;
+            --accent-glow: #0f3460;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            touch-action: none; /* 防止手機模式下縮放 */
+        }
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(20, 1fr);
+            grid-template-rows: repeat(20, 1fr);
+            gap: 1px;
+            background-color: var(--grid-color);
+            border: 4px solid var(--accent-glow);
+            box-shadow: 0 0 20px var(--accent-glow);
+            width: 90vw;
+            height: 90vw;
+            max-width: 500px;
+            max-height: 500px;
+            margin: 0 auto;
+            position: relative;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .cell {
+            background-color: var(--bg-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            position: relative;
+        }
+        /* 特效：粒子爆炸 */
+        .particle {
+            position: absolute;
+            pointer-events: none;
+            animation: explode 0.6s ease-out forwards;
+            z-index: 100;
+        }
+        @keyframes explode {
+            0% { transform: translate(0, 0) scale(1); opacity: 1; }
+            100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+        }
+        /* 特效：畫面震動 */
+        .shake {
+            animation: shake 0.3s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+        /* 特效：得分浮動文字 */
+        .floating-text {
+            position: absolute;
+            font-weight: bold;
+            color: #fbbf24;
+            pointer-events: none;
+            animation: float-up 0.8s ease-out forwards;
+            z-index: 110;
+            text-shadow: 0 0 5px black;
+        }
+        @keyframes float-up {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-40px); opacity: 0; }
+        }
+        /* 特效：受傷閃爍 */
+        .invincible {
+            animation: blink 0.2s step-end infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0.3; }
+        }
+        #control-hint {
+            margin-top: 20px;
+            color: #718096;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- 頂部資訊 -->
+    <div class="w-full max-w-[500px] mb-4">
+        <div class="flex justify-between items-center">
+            <div class="text-xl font-bold">分數: <span id="score" class="text-yellow-400">0</span></div>
+            <div id="lives-display" class="text-xl tracking-tighter">❤️❤️❤️</div>
+            <div class="text-xl font-bold">最高: <span id="high-score">0</span></div>
+        </div>
+        <div id="buff-container" class="h-6 mt-1 flex gap-2 text-xs"></div>
+    </div>
+
+    <!-- 遊戲區域 -->
+    <div id="game-container" class="relative">
+        <div id="game-board"></div>
+        
+        <!-- 結束選單 -->
+        <div id="overlay" class="absolute inset-0 flex flex-col items-center justify-center hidden bg-slate-950/90 z-50">
+            <h2 class="text-4xl font-black mb-2 text-rose-500">GAME OVER</h2>
+            <p id="final-score" class="mb-6 text-xl text-gray-300"></p>
+            <button id="start-btn" class="px-8 py-3 bg-rose-600 hover:bg-rose-500 rounded-full font-bold text-xl transition-all shadow-lg shadow-rose-900/40">
+                再次挑戰
+            </button>
+        </div>
+    </div>
+
+    <!-- 操控提示 -->
+    <div id="control-hint">
+        ⌨️ 使用 <b>方向鍵</b> 或 <b>WASD</b> 控制移動<br>
+        <span class="text-xs opacity-60">(點擊下方按鈕或空白鍵重開)</span>
+    </div>
+
+    <script>
+        const GRID_SIZE = 20;
+        const board = document.getElementById('game-board');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('high-score');
+        const livesDisplay = document.getElementById('lives-display');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const buffContainer = document.getElementById('buff-container');
+
+        const SNAKE_HEAD = '🐍';
+        const SNAKE_BODY = '🟢';
+        const REGULAR_FOODS = ['🍎', '🍐', '🍓', '🍇', '🍒', '🧁'];
+        
+        const ITEMS = {
+            GOLDEN_APPLE: { emoji: '🟡', chance: 0.05, score: 50 },
+            CLOCK: { emoji: '⏰', chance: 0.05, score: 5 },
+            STAR: { emoji: '⭐', chance: 0.05, score: 10 },
+            BOMB: { emoji: '💣', chance: 0.08, score: -20 },
+            HEALTH: { emoji: '💊', chance: 0.03, score: 5 }
+        };
+        
+        let snake = [{x: 10, y: 10}];
+        let activeItems = [];
+        let direction = 'RIGHT';
+        let nextDirection = 'RIGHT';
+        let score = 0;
+        let lives = 3;
+        let highScore = localStorage.getItem('snake-high-score-classic') || 0;
+        let gameLoop = null;
+        let baseSpeed = 150;
+        let currentSpeed = 150;
+        
+        let slowMotionTimer = 0;
+        let doubleScoreTimer = 0;
+        let invincibleTimer = 0;
+
+        highScoreElement.innerText = highScore;
+
+        function createGrid() {
+            board.innerHTML = '';
+            for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                board.appendChild(cell);
+            }
+        }
+
+        // --- 特效函數 ---
+        function createParticles(x, y, emoji, count = 6) {
+            const cells = document.querySelectorAll('.cell');
+            const targetCell = cells[y * GRID_SIZE + x];
+            if (!targetCell) return;
+
+            for (let i = 0; i < count; i++) {
+                const particle = document.createElement('span');
+                particle.innerText = emoji;
+                particle.className = 'particle';
+                const tx = (Math.random() - 0.5) * 100 + 'px';
+                const ty = (Math.random() - 0.5) * 100 + 'px';
+                particle.style.setProperty('--tx', tx);
+                particle.style.setProperty('--ty', ty);
+                targetCell.appendChild(particle);
+                setTimeout(() => particle.remove(), 600);
+            }
+        }
+
+        function triggerScreenShake() {
+            board.classList.add('shake');
+            setTimeout(() => board.classList.remove('shake'), 300);
+        }
+
+        function spawnFloatingText(x, y, text) {
+            const cells = document.querySelectorAll('.cell');
+            const targetCell = cells[y * GRID_SIZE + x];
+            if (!targetCell) return;
+            
+            const floating = document.createElement('div');
+            floating.className = 'floating-text';
+            floating.innerText = text;
+            targetCell.appendChild(floating);
+            setTimeout(() => floating.remove(), 800);
+        }
+
+        function updateBoardGlow() {
+            if (doubleScoreTimer > 0) {
+                board.style.borderColor = '#a855f7';
+                board.style.boxShadow = '0 0 25px #a855f7';
+            } else if (slowMotionTimer > 0) {
+                board.style.borderColor = '#3b82f6';
+                board.style.boxShadow = '0 0 25px #3b82f6';
+            } else {
+                board.style.borderColor = '#0f3460';
+                board.style.boxShadow = '0 0 20px #0f3460';
+            }
+        }
+
+        function draw() {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach(cell => {
+                const elements = cell.querySelectorAll('.particle, .floating-text');
+                cell.innerHTML = '';
+                elements.forEach(el => cell.appendChild(el));
+                cell.classList.remove('invincible');
+            });
+
+            snake.forEach((segment, index) => {
+                const cellIndex = segment.y * GRID_SIZE + segment.x;
+                if (cells[cellIndex]) {
+                    const span = document.createElement('span');
+                    span.innerText = index === 0 ? SNAKE_HEAD : SNAKE_BODY;
+                    cells[cellIndex].appendChild(span);
+                    if (invincibleTimer > 0) cells[cellIndex].classList.add('invincible');
+                }
+            });
+
+            activeItems.forEach(item => {
+                const itemIndex = item.y * GRID_SIZE + item.x;
+                if (cells[itemIndex]) {
+                    const span = document.createElement('span');
+                    span.innerText = item.emoji;
+                    cells[itemIndex].appendChild(span);
+                }
+            });
+
+            updateStatusUI();
+            updateBoardGlow();
+        }
+
+        function updateStatusUI() {
+            livesDisplay.innerText = '❤️'.repeat(lives);
+            buffContainer.innerHTML = '';
+            if (slowMotionTimer > 0) buffContainer.innerHTML += `<span class="bg-blue-900 px-2 py-1 rounded">⏰ 減速</span>`;
+            if (doubleScoreTimer > 0) buffContainer.innerHTML += `<span class="bg-purple-900 px-2 py-1 rounded">⭐ 雙倍</span>`;
+            if (invincibleTimer > 0) buffContainer.innerHTML += `<span class="bg-yellow-900 px-2 py-1 rounded">🛡️ 無敵</span>`;
+        }
+
+        function update() {
+            direction = nextDirection;
+            const head = { ...snake[0] };
+
+            if (direction === 'UP') head.y -= 1;
+            if (direction === 'DOWN') head.y += 1;
+            if (direction === 'LEFT') head.x -= 1;
+            if (direction === 'RIGHT') head.x += 1;
+
+            const hitWall = head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE;
+            const hitSelf = snake.some(s => s.x === head.x && s.y === head.y);
+
+            if (hitWall || hitSelf) {
+                if (invincibleTimer <= 0) {
+                    takeDamage();
+                }
+                return;
+            }
+
+            snake.unshift(head);
+
+            let eatenItemIndex = activeItems.findIndex(item => item.x === head.x && item.y === head.y);
+            
+            if (eatenItemIndex !== -1) {
+                const eatenItem = activeItems[eatenItemIndex];
+                createParticles(head.x, head.y, eatenItem.emoji);
+                if (eatenItem.type === 'GOLDEN_APPLE' || eatenItem.type === 'BOMB') triggerScreenShake();
+                applyEffect(eatenItem);
+                activeItems.splice(eatenItemIndex, 1);
+                if (eatenItem.type === 'NORMAL' || eatenItem.type === 'GOLDEN_APPLE') spawnItem('NORMAL');
+                if (Math.random() < 0.3) spawnRandomBonus();
+            } else {
+                snake.pop();
+            }
+
+            if (slowMotionTimer > 0) slowMotionTimer -= currentSpeed;
+            if (doubleScoreTimer > 0) doubleScoreTimer -= currentSpeed;
+            if (invincibleTimer > 0) invincibleTimer -= currentSpeed;
+
+            currentSpeed = slowMotionTimer > 0 ? baseSpeed * 1.5 : baseSpeed;
+            draw();
+        }
+
+        function takeDamage() {
+            lives--;
+            triggerScreenShake();
+            createParticles(snake[0].x, snake[0].y, '💥', 12);
+            if (lives <= 0) {
+                lives = 0;
+                updateStatusUI();
+                return gameOver();
+            }
+            score = Math.max(0, score - 50);
+            scoreElement.innerText = score;
+            spawnFloatingText(snake[0].x, snake[0].y, '-50');
+            invincibleTimer = 3000;
+            // 重置到中心
+            const offset = { x: 10 - snake[0].x, y: 10 - snake[0].y };
+            snake = snake.map(s => ({
+                x: Math.max(0, Math.min(GRID_SIZE-1, s.x + offset.x)),
+                y: Math.max(0, Math.min(GRID_SIZE-1, s.y + offset.y))
+            }));
+            draw();
+        }
+
+        function applyEffect(item) {
+            let points = item.score || 10;
+            if (doubleScoreTimer > 0 && points > 0) points *= 2;
+            score += points;
+            if (score < 0) score = 0;
+            scoreElement.innerText = score;
+            spawnFloatingText(snake[0].x, snake[0].y, (points >= 0 ? '+' : '') + points);
+            if (score > highScore) {
+                highScore = score;
+                highScoreElement.innerText = highScore;
+                localStorage.setItem('snake-high-score-classic', highScore);
+            }
+            if (item.type === 'CLOCK') slowMotionTimer = 5000;
+            if (item.type === 'STAR') doubleScoreTimer = 5000;
+            if (item.type === 'HEALTH' && lives < 5) lives++;
+            if (item.type === 'NORMAL' && baseSpeed > 70) baseSpeed -= 1;
+        }
+
+        function spawnItem(type) {
+            let pos;
+            let attempts = 0;
+            while(attempts < 100) {
+                pos = { x: Math.floor(Math.random() * GRID_SIZE), y: Math.floor(Math.random() * GRID_SIZE) };
+                if (!snake.some(s => s.x === pos.x && s.y === pos.y) && !activeItems.some(i => i.x === pos.x && i.y === pos.y)) break;
+                attempts++;
+            }
+            if (type === 'NORMAL') {
+                activeItems.push({ ...pos, type: 'NORMAL', emoji: REGULAR_FOODS[Math.floor(Math.random() * REGULAR_FOODS.length)], score: 10 });
+            } else {
+                activeItems.push({ ...pos, type: type, emoji: ITEMS[type].emoji, score: ITEMS[type].score });
+            }
+        }
+
+        function spawnRandomBonus() {
+            const rand = Math.random();
+            if (rand < ITEMS.GOLDEN_APPLE.chance) spawnItem('GOLDEN_APPLE');
+            else if (rand < 0.1) spawnItem('CLOCK');
+            else if (rand < 0.15) spawnItem('STAR');
+            else if (rand < 0.23) spawnItem('BOMB');
+            else if (rand < 0.26) spawnItem('HEALTH');
+        }
+
+        function gameOver() {
+            clearInterval(gameLoop);
+            document.getElementById('final-score').innerText = `最終得分: ${score}`;
+            overlay.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            snake = [{x: 10, y: 10}];
+            activeItems = [];
+            direction = 'RIGHT';
+            nextDirection = 'RIGHT';
+            score = 0;
+            lives = 3;
+            baseSpeed = 150;
+            currentSpeed = 150;
+            slowMotionTimer = 0;
+            doubleScoreTimer = 0;
+            invincibleTimer = 0;
+            scoreElement.innerText = score;
+            overlay.classList.add('hidden');
+            createGrid();
+            spawnItem('NORMAL');
+            spawnItem('NORMAL');
+            spawnRandomBonus();
+            draw();
+            clearInterval(gameLoop);
+            gameLoop = setInterval(() => update(), currentSpeed);
+        }
+
+        // --- 鍵盤操控邏輯 ---
+        function handleInput(key) {
+            const k = key.toLowerCase();
+            if ((k === 'arrowup' || k === 'w') && direction !== 'DOWN') nextDirection = 'UP';
+            if ((k === 'arrowdown' || k === 's') && direction !== 'UP') nextDirection = 'DOWN';
+            if ((k === 'arrowleft' || k === 'a') && direction !== 'RIGHT') nextDirection = 'LEFT';
+            if ((k === 'arrowright' || k === 'd') && direction !== 'LEFT') nextDirection = 'RIGHT';
+            
+            // 空白鍵重啟
+            if (key === ' ' && !overlay.classList.contains('hidden')) resetGame();
+        }
+
+        window.addEventListener('keydown', (e) => handleInput(e.key));
+
+        startBtn.addEventListener('click', resetGame);
+
+        window.onload = () => {
+            createGrid();
+            resetGame();
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji 水果切切樂 - 炸彈懲罰版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            pointer-events: none;
+            color: white;
+            user-select: none;
+        }
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 2.5rem;
+            border-radius: 1.5rem;
+            text-align: center;
+            display: none;
+            border: 3px solid #fbbf24;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer" class="flex justify-between items-start">
+        <div class="text-3xl font-bold drop-shadow-md">
+            分數: <span id="score">0</span>
+        </div>
+        <div class="text-3xl font-bold text-red-500 drop-shadow-md">
+            生命: <span id="lives">❤️❤️❤️</span>
+        </div>
+    </div>
+
+    <div id="game-over" class="game-over">
+        <h1 class="text-5xl font-black text-yellow-500 mb-4">遊戲結束</h1>
+        <p class="text-2xl mb-6 text-white">最終得分: <span id="final-score">0</span></p>
+        <button onclick="resetGame()" class="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-4 px-10 rounded-full text-2xl transition-all pointer-events-auto active:scale-95">
+            重新開始
+        </button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const gameOverEl = document.getElementById('game-over');
+        const finalScoreEl = document.getElementById('final-score');
+
+        let score = 0;
+        let lives = 3;
+        let isGameOver = false;
+        let fruits = [];
+        let particles = [];
+        let trail = [];
+
+        const FRUIT_LIST = [
+            { char: '🍎', type: 'fruit' },
+            { char: '🍉', type: 'fruit' },
+            { char: '🍍', type: 'fruit' },
+            { char: '🍓', type: 'fruit' },
+            { char: '🍊', type: 'fruit' },
+            { char: '🥝', type: 'fruit' },
+            { char: '🍇', type: 'fruit' }
+        ];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Fruit {
+            constructor(specificType = null) {
+                this.reset(specificType);
+            }
+
+            reset(specificType) {
+                let data;
+                if (specificType === 'fruit') {
+                    data = FRUIT_LIST[Math.floor(Math.random() * FRUIT_LIST.length)];
+                } else {
+                    const rand = Math.random();
+                    if (rand < 0.15) {
+                        data = { char: '💣', type: 'bomb' };
+                    } else if (rand < 0.22) {
+                        data = { char: '❤️', type: 'heart' };
+                    } else {
+                        data = FRUIT_LIST[Math.floor(Math.random() * FRUIT_LIST.length)];
+                    }
+                }
+
+                this.char = data.char;
+                this.type = data.type;
+                this.size = 65 + Math.random() * 15;
+                this.x = (canvas.width * 0.15) + Math.random() * (canvas.width * 0.7);
+                this.y = canvas.height + 60;
+                
+                const centerX = canvas.width / 2;
+                const direction = this.x < centerX ? 1 : -1;
+                this.vx = (Math.random() * 2 + 1) * direction; 
+                this.vy = -(Math.random() * 3 + 10); 
+                this.gravity = 0.15; 
+                this.rotation = 0;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.08;
+                this.sliced = false;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                this.rotation += this.rotationSpeed;
+
+                if (this.y > canvas.height + 150 && this.vy > 0) {
+                    // 只有一般水果落地才扣分，炸彈和愛心落地不扣分
+                    if (!this.sliced && !isGameOver && this.type === 'fruit') {
+                        loseLife();
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                ctx.font = `${this.size}px serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                if (!this.sliced) {
+                    ctx.shadowColor = this.type === 'bomb' ? 'rgba(255,0,0,0.8)' : 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = this.type === 'bomb' ? 25 : 10;
+                    ctx.fillText(this.char, 0, 0);
+                }
+                ctx.restore();
+            }
+
+            checkSlice(x2, y2) {
+                if (this.sliced) return false;
+                const dist = Math.hypot(this.x - x2, this.y - y2);
+                if (dist < this.size * 0.8) {
+                    this.sliced = true;
+                    createParticles(this.x, this.y, this.char);
+                    
+                    if (this.type === 'bomb') {
+                        // 切到炸彈：扣心 + 快速噴發水果
+                        loseLife();
+                        triggerBombBurst(this.x, this.y);
+                    } else if (this.type === 'heart') {
+                        gainLife();
+                    } else {
+                        score += 10;
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        class Particle {
+            constructor(x, y, char) {
+                this.x = x;
+                this.y = y;
+                this.char = char;
+                this.vx = (Math.random() - 0.5) * 12;
+                this.vy = (Math.random() - 0.5) * 12;
+                this.gravity = 0.3;
+                this.alpha = 1;
+                this.size = 30;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                this.alpha -= 0.03;
+                return this.alpha <= 0;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.font = `${this.size}px serif`;
+                ctx.fillText(this.char, this.x, this.y);
+                ctx.restore();
+            }
+        }
+
+        function createParticles(x, y, char) {
+            for (let i = 0; i < 6; i++) {
+                particles.push(new Particle(x, y, char));
+            }
+        }
+
+        function triggerBombBurst(x, y) {
+            // 切到炸彈後快速向上噴發 3 到 5 顆額外水果
+            const count = Math.floor(Math.random() * 3) + 3;
+            for (let i = 0; i < count; i++) {
+                setTimeout(() => {
+                    if (!isGameOver) {
+                        const f = new Fruit('fruit');
+                        f.x = x;
+                        f.y = y;
+                        // 顯著增加向上的初始初速度 (快速向上)
+                        f.vy = -(Math.random() * 8 + 12); 
+                        f.vx = (Math.random() - 0.5) * 15;
+                        fruits.push(f);
+                    }
+                }, i * 80); // 縮短噴發間隔，顯得更急促
+            }
+        }
+
+        function gainLife() {
+            if (lives < 3) {
+                lives++;
+                updateUI();
+            }
+        }
+
+        function loseLife() {
+            lives--;
+            updateUI();
+            if (lives <= 0) endGame();
+        }
+
+        function updateUI() {
+            scoreEl.innerText = score;
+            livesEl.innerText = '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, 3 - lives));
+        }
+
+        function endGame() {
+            isGameOver = true;
+            gameOverEl.style.display = 'block';
+            finalScoreEl.innerText = score;
+        }
+
+        function resetGame() {
+            score = 0;
+            lives = 3;
+            isGameOver = false;
+            fruits = [];
+            particles = [];
+            gameOverEl.style.display = 'none';
+            spawnCooldown = 60; 
+            updateUI();
+        }
+
+        let isMouseDown = false;
+
+        function handleMove(e) {
+            const x = e.touches ? e.touches[0].clientX : e.clientX;
+            const y = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            if (isMouseDown || e.touches) {
+                trail.push({ x, y, life: 12 });
+                
+                if (!isGameOver) {
+                    fruits.forEach(fruit => {
+                        if (fruit.checkSlice(x, y)) {
+                            updateUI();
+                        }
+                    });
+                }
+            }
+        }
+
+        window.addEventListener('mousedown', () => isMouseDown = true);
+        window.addEventListener('mouseup', () => { isMouseDown = false; });
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('touchstart', (e) => { handleMove(e); });
+        window.addEventListener('touchmove', handleMove);
+
+        let spawnCooldown = 100; 
+
+        function spawnWave() {
+            // 每 1500 分，波次的水果基礎數量增加一顆
+            const bonus = Math.floor(score / 1500);
+            const minCount = 3 + bonus;
+            const maxCount = 5 + bonus;
+            
+            const count = Math.floor(Math.random() * (maxCount - minCount + 1)) + minCount; 
+            
+            for(let i = 0; i < count; i++) {
+                setTimeout(() => {
+                    if(!isGameOver) fruits.push(new Fruit());
+                }, i * 400); 
+            }
+        }
+
+        function gameLoop() {
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (!isGameOver) {
+                spawnCooldown--;
+                if (spawnCooldown <= 0) {
+                    spawnWave();
+                    spawnCooldown = 180 + Math.random() * 60; 
+                }
+            }
+
+            for (let i = fruits.length - 1; i >= 0; i--) {
+                if (fruits[i].update()) {
+                    fruits.splice(i, 1);
+                } else {
+                    fruits[i].draw();
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                if (particles[i].update()) {
+                    particles.splice(i, 1);
+                } else {
+                    particles[i].draw();
+                }
+            }
+
+            if (trail.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = 6;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                for (let i = 0; i < trail.length; i++) {
+                    const p = trail[i];
+                    if (i === 0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                    p.life--;
+                }
+                ctx.stroke();
+            }
+            trail = trail.filter(p => p.life > 0);
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = gameLoop;
+    </script>
+</body>
+</html>

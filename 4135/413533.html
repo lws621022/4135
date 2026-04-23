@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>網頁版我的世界 2.0 - 平滑物理版</title>
+    <style>
+        :root {
+            --ui-bg: rgba(0, 0, 0, 0.7);
+            --active-border: #ffffff;
+            --slot-size: 56px;
+        }
+
+        body { margin: 0; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; background-color: #87ceeb; }
+        canvas { display: block; }
+        
+        #ui-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 24px;
+            box-sizing: border-box;
+            color: white;
+        }
+
+        .header { text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+        .header h1 { margin: 0; font-size: 24px; letter-spacing: 1px; }
+        .header p { margin: 4px 0; font-size: 14px; opacity: 0.8; }
+
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 18px; height: 18px;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.8);
+        }
+        #crosshair::before { width: 2px; height: 100%; }
+        #crosshair::after { width: 100%; height: 2px; }
+
+        #hotbar {
+            align-self: center;
+            display: flex;
+            gap: 8px;
+            background: var(--ui-bg);
+            padding: 8px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            pointer-events: auto;
+            margin-bottom: 10px;
+        }
+
+        .slot {
+            width: var(--slot-size);
+            height: var(--slot-size);
+            border: 2px solid transparent;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.1);
+            transition: all 0.15s ease;
+            position: relative;
+        }
+
+        .slot.active {
+            background: rgba(255,255,255,0.3);
+            border-color: var(--active-border);
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .slot span { position: absolute; bottom: 2px; right: 4px; font-size: 10px; opacity: 0.6; }
+
+        #overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            cursor: pointer;
+            transition: opacity 0.4s ease;
+        }
+
+        .kbd { background: #333; padding: 3px 10px; border-radius: 5px; font-family: monospace; border-bottom: 3px solid #111; color: #fff; margin: 0 2px; }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h2 style="color: white; font-size: 36px; margin-bottom: 10px;">Minecraft Web</h2>
+        <p style="color: #ccc; font-size: 18px;">點擊任何地方開始遊戲</p>
+        <div style="margin-top: 30px; font-size: 14px; color: #888; text-align: center; line-height: 2;">
+            <div><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> 移動</div>
+            <div><span class="kbd">SPACE</span> 跳躍 | <span class="kbd">1-4</span> 切換方塊</div>
+            <div><span class="kbd">左鍵</span> 破壞 | <span class="kbd">右鍵</span> 放置</div>
+        </div>
+    </div>
+
+    <div id="ui-container">
+        <div class="header">
+            <h1>我的世界</h1>
+            <p id="stats">FPS: -- | 位置: 0.0, 0.0, 0.0</p>
+        </div>
+        <div id="crosshair"></div>
+        <div id="hotbar">
+            <div class="slot active" data-type="1"><span>1</span><div style="width:28px;height:28px;background:#5d994d;border:1px solid #3d6633;"></div></div>
+            <div class="slot" data-type="2"><span>2</span><div style="width:28px;height:28px;background:#8b5a2b;border:1px solid #5d3d1d;"></div></div>
+            <div class="slot" data-type="3"><span>3</span><div style="width:28px;height:28px;background:#5d4037;border:1px solid #3e2b25;"></div></div>
+            <div class="slot" data-type="4"><span>4</span><div style="width:28px;height:28px;background:#708090;border:1px solid #4a5560;"></div></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- 全域變數 ---
+        let scene, camera, renderer, clock, raycaster;
+        let blocks = [];
+        let blockMap = new Map();
+        let velocity = new THREE.Vector3();
+        let canJump = false;
+        let currentBlockType = 1;
+        let highlightBox;
+        let isPointerLockPending = false; // 防止重複請求鎖定
+
+        // 常數設定
+        const PLAYER_HEIGHT = 1.75;
+        const PLAYER_RADIUS = 0.3;
+        const MOUSE_SENSITIVITY = 0.0022;
+        const GRAVITY = 24.0;
+        const JUMP_FORCE = 9.0;
+        const WALK_SPEED = 6.0;
+
+        // --- 材質生成 ---
+        function createPixelTexture(color) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 16; canvas.height = 16;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, 16, 16);
+            for(let i=0; i<16; i++) {
+                for(let j=0; j<16; j++) {
+                    if(Math.random() > 0.8) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.05)';
+                        ctx.fillRect(i, j, 1, 1);
+                    }
+                }
+            }
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, 0, 16, 16);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.magFilter = THREE.NearestFilter;
+            tex.minFilter = THREE.NearestFilter;
+            return tex;
+        }
+
+        const materials = {
+            1: new THREE.MeshLambertMaterial({ map: createPixelTexture('#5d994d') }),
+            2: new THREE.MeshLambertMaterial({ map: createPixelTexture('#8b5a2b') }),
+            3: new THREE.MeshLambertMaterial({ map: createPixelTexture('#5d4037') }),
+            4: new THREE.MeshLambertMaterial({ map: createPixelTexture('#708090') }),
+        };
+
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+        // --- 初始化 ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            scene.fog = new THREE.FogExp2(0x87ceeb, 0.035);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 5); 
+            camera.rotation.order = 'YXZ';
+
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.9));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.4);
+            sun.position.set(10, 50, 10);
+            scene.add(sun);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            clock = new THREE.Clock();
+            raycaster = new THREE.Raycaster();
+
+            const hbGeo = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+            const hbMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, transparent: true, opacity: 0.4 });
+            highlightBox = new THREE.Mesh(hbGeo, hbMat);
+            scene.add(highlightBox);
+
+            generateWorld();
+            setupControls();
+            
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function generateWorld() {
+            const size = 15;
+            for (let x = -size; x <= size; x++) {
+                for (let z = -size; z <= size; z++) {
+                    const noise = Math.sin(x/5) * Math.cos(z/5);
+                    const h = Math.floor(noise * 2) + 2;
+                    for (let y = 0; y <= h; y++) {
+                        addBlock(x, y, z, y === h ? 1 : 2);
+                    }
+                }
+            }
+        }
+
+        function addBlock(x, y, z, type) {
+            const key = `${x},${y},${z}`;
+            if (blockMap.has(key)) return;
+            const mesh = new THREE.Mesh(geometry, materials[type]);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            blocks.push(mesh);
+            blockMap.set(key, mesh);
+        }
+
+        function removeBlock(mesh) {
+            const key = `${Math.round(mesh.position.x)},${Math.round(mesh.position.y)},${Math.round(mesh.position.z)}`;
+            scene.remove(mesh);
+            blockMap.delete(key);
+            blocks = blocks.filter(b => b !== mesh);
+        }
+
+        function checkCollision(pos) {
+            for(let block of blocks) {
+                const b = block.position;
+                if (pos.x + PLAYER_RADIUS > b.x - 0.5 && pos.x - PLAYER_RADIUS < b.x + 0.5 &&
+                    pos.z + PLAYER_RADIUS > b.z - 0.5 && pos.z - PLAYER_RADIUS < b.z + 0.5 &&
+                    pos.y > b.y - 0.5 && pos.y - PLAYER_HEIGHT < b.y + 0.5) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function setupControls() {
+            const overlay = document.getElementById('overlay');
+            
+            // 安全地請求指針鎖定
+            overlay.addEventListener('click', () => {
+                if (!document.pointerLockElement && !isPointerLockPending) {
+                    isPointerLockPending = true;
+                    // 使用 Promise 風格處理可能的錯誤
+                    const promise = document.body.requestPointerLock();
+                    if (promise && promise.catch) {
+                        promise.catch(() => {
+                            isPointerLockPending = false;
+                        });
+                    }
+                }
+            });
+
+            document.addEventListener('pointerlockchange', () => {
+                isPointerLockPending = false;
+                const isLocked = document.pointerLockElement === document.body;
+                overlay.style.opacity = isLocked ? '0' : '1';
+                overlay.style.pointerEvents = isLocked ? 'none' : 'auto';
+            });
+
+            // 捕獲鎖定失敗錯誤
+            document.addEventListener('pointerlockerror', () => {
+                isPointerLockPending = false;
+                console.warn("Pointer Lock failed.");
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.body) {
+                    camera.rotation.y -= e.movementX * MOUSE_SENSITIVITY;
+                    camera.rotation.x -= e.movementY * MOUSE_SENSITIVITY;
+                    camera.rotation.x = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, camera.rotation.x));
+                }
+            });
+
+            const keys = { KeyW: false, KeyS: false, KeyA: false, KeyD: false };
+            document.addEventListener('keydown', (e) => {
+                if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
+                if (e.code === 'Space' && canJump) { velocity.y = JUMP_FORCE; canJump = false; }
+                if (e.key >= '1' && e.key <= '4') updateHotbar(parseInt(e.key));
+            });
+            document.addEventListener('keyup', (e) => {
+                if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
+            });
+            window.moveState = keys;
+
+            document.addEventListener('mousedown', (e) => {
+                if (document.pointerLockElement !== document.body) return;
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const hits = raycaster.intersectObjects(blocks);
+                if (hits.length > 0) {
+                    const hit = hits[0];
+                    if (e.button === 0) { // 左鍵：破壞
+                        removeBlock(hit.object);
+                    } else if (e.button === 2) { // 右鍵：放置
+                        const p = hit.object.position.clone().add(hit.face.normal);
+                        const px = Math.round(p.x), py = Math.round(p.y), pz = Math.round(p.z);
+                        const pPos = camera.position;
+                        const collidesWithPlayer = px === Math.round(pPos.x) && pz === Math.round(pPos.z) && 
+                                                 (py === Math.round(pPos.y) || py === Math.round(pPos.y - 1));
+                        if (!collidesWithPlayer) addBlock(px, py, pz, currentBlockType);
+                    }
+                }
+            });
+            document.addEventListener('contextmenu', e => e.preventDefault());
+        }
+
+        function updateHotbar(type) {
+            currentBlockType = type;
+            document.querySelectorAll('.slot').forEach(s => {
+                s.classList.remove('active');
+                if (parseInt(s.dataset.type) === type) s.classList.add('active');
+            });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+            const state = window.moveState || {};
+
+            velocity.y -= GRAVITY * delta;
+
+            const dir = new THREE.Vector3();
+            dir.z = Number(state.KeyW) - Number(state.KeyS);
+            dir.x = Number(state.KeyD) - Number(state.KeyA);
+            dir.normalize();
+
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y));
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y));
+            
+            const moveVec = new THREE.Vector3();
+            moveVec.addScaledVector(forward, dir.z * WALK_SPEED * delta);
+            moveVec.addScaledVector(right, dir.x * WALK_SPEED * delta);
+
+            const nextX = camera.position.clone();
+            nextX.x += moveVec.x;
+            if (!checkCollision(nextX)) camera.position.x = nextX.x;
+
+            const nextZ = camera.position.clone();
+            nextZ.z += moveVec.z;
+            if (!checkCollision(nextZ)) camera.position.z = nextZ.z;
+
+            const nextY = camera.position.clone();
+            nextY.y += velocity.y * delta;
+
+            if (checkCollision(nextY)) {
+                if (velocity.y < 0) {
+                    canJump = true;
+                    velocity.y = 0;
+                } else {
+                    velocity.y = 0;
+                }
+            } else {
+                camera.position.y = nextY.y;
+                if (velocity.y < 0) canJump = false;
+            }
+
+            if (camera.position.y < -30) camera.position.set(0, 20, 0);
+
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const hits = raycaster.intersectObjects(blocks);
+            if (hits.length > 0) {
+                highlightBox.position.copy(hits[0].object.position);
+                highlightBox.visible = true;
+            } else {
+                highlightBox.visible = false;
+            }
+
+            if (Math.random() < 0.1) {
+                document.getElementById('stats').innerText = `FPS: ${Math.round(1/delta)} | 位置: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}`;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

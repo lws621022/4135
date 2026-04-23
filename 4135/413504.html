@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小雞過馬路 🐥 - 晉級送生命版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            touch-action: manipulation;
+            overflow: hidden;
+            background-color: #333;
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            height: 75vh;
+            margin: 0 auto;
+            background: #222;
+            overflow: hidden;
+            border: 4px solid #444;
+            border-radius: 12px;
+        }
+        .lane {
+            position: absolute;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px dashed #444;
+        }
+        .grass { background-color: #2d5a27; }
+        .road { background-color: #333; }
+        .finish { background-color: #ffd700; }
+
+        #player {
+            position: absolute;
+            transition: all 0.08s ease-out;
+            z-index: 50;
+            font-size: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .invincible {
+            animation: blink 0.2s infinite;
+            opacity: 0.5;
+        }
+        @keyframes blink {
+            0% { opacity: 0.2; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0.2; }
+        }
+
+        .vehicle {
+            position: absolute;
+            font-size: 32px;
+            white-space: nowrap;
+        }
+        .weather-effect {
+            position: absolute;
+            font-size: 35px;
+            z-index: 45;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        .lightning-flash {
+            animation: flash 0.15s infinite;
+            filter: drop-shadow(0 0 10px #fff700);
+        }
+        @keyframes flash {
+            0% { opacity: 1; transform: scale(1.1); }
+            50% { opacity: 0.3; transform: scale(1.3); }
+            100% { opacity: 1; transform: scale(1.1); }
+        }
+
+        /* UFO 相關樣式 */
+        .ufo {
+            position: absolute;
+            font-size: 40px;
+            z-index: 70;
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            filter: drop-shadow(0 0 8px #00ff00);
+        }
+        .ufo-beam {
+            position: absolute;
+            width: 60px;
+            background: rgba(0, 255, 0, 0.1);
+            border: 2px dashed rgba(0, 255, 0, 0.4);
+            z-index: 65;
+            pointer-events: none;
+            transition: background 0.2s;
+        }
+        .ufo-beam.active {
+            background: rgba(0, 255, 0, 0.6);
+            border: 2px solid #00ff00;
+            box-shadow: 0 0 30px #00ff00;
+        }
+
+        .ui-panel {
+            text-shadow: 2px 2px 0px rgba(0,0,0,0.5);
+        }
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: white;
+            user-select: none;
+        }
+        .control-btn:active {
+            background: rgba(255,255,255,0.4);
+            transform: scale(0.9);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-2 font-sans text-white">
+
+    <div class="mb-2 text-center ui-panel w-full max-w-md">
+        <div class="flex justify-between items-center mb-1">
+            <h1 class="text-2xl font-bold">小雞過馬路 🐥</h1>
+            <div id="hearts" class="text-2xl text-red-500">❤️❤️❤️</div>
+        </div>
+        <div class="flex justify-around text-lg bg-black/30 rounded-lg py-1">
+            <span>得分: <span id="score-val" class="text-yellow-400">0</span></span>
+            <span>等級: <span id="level-val" class="text-green-400">1</span></span>
+        </div>
+        <p id="weather-status" class="text-blue-400 font-bold h-6 mt-1 text-sm animate-pulse"></p>
+    </div>
+
+    <div id="game-container">
+        <div id="player">🐥</div>
+    </div>
+
+    <div class="mt-4 grid grid-cols-3 gap-2 md:hidden">
+        <div></div>
+        <div class="control-btn" onclick="movePlayer(0, -1)">▲</div>
+        <div></div>
+        <div class="control-btn" onclick="movePlayer(-1, 0)">◀</div>
+        <div class="control-btn" onclick="movePlayer(0, 1)">▼</div>
+        <div class="control-btn" onclick="movePlayer(1, 0)">▶</div>
+    </div>
+
+    <div class="mt-2 text-gray-400 text-xs hidden md:block text-center">
+        [↑][↓][←][→] 移動 | <span class="text-pink-400 font-semibold">恭喜！每過一關會獎勵一顆 ❤️</span>
+    </div>
+
+    <div id="overlay" class="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] hidden">
+        <div class="bg-gray-800 p-8 rounded-2xl text-center border-2 border-yellow-500 max-w-xs w-full">
+            <h2 id="death-title" class="text-4xl mb-4 text-red-500">遊戲結束</h2>
+            <p id="death-msg" class="text-xl mb-6"></p>
+            <p class="text-2xl font-bold mb-6 text-yellow-400">最終得分: <span id="final-score">0</span></p>
+            <button onclick="resetGame()" class="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-8 rounded-full transition-colors w-full">
+                重新開始
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('game-container');
+        const playerEl = document.getElementById('player');
+        const scoreEl = document.getElementById('score-val');
+        const levelEl = document.getElementById('level-val');
+        const heartsEl = document.getElementById('hearts');
+        const weatherStatus = document.getElementById('weather-status');
+        const overlay = document.getElementById('overlay');
+        const finalScoreEl = document.getElementById('final-score');
+        const deathTitle = document.getElementById('death-title');
+        const deathMsg = document.getElementById('death-msg');
+
+        const GRID_SIZE = 40;
+        let score = 0;
+        let level = 1;
+        let lives = 3;
+        let gameActive = true;
+        let isInvincible = false;
+        let lanes = [];
+        let vehicles = [];
+        let playerPos = { x: 5, y: 0 };
+        let containerRect = container.getBoundingClientRect();
+        
+        let lastLightningTime = 0;
+        let lastUfoTime = 0;
+
+        const VEHICLES = ['🚗', '🚕', '🚙', '🚌', '🚎', '🏎️', '🚓', '🚑', '🚒', '🚐', '🛻', '🚚', '🚛'];
+
+        function initGame() {
+            containerRect = container.getBoundingClientRect();
+            const laneCount = Math.floor(containerRect.height / GRID_SIZE);
+            
+            document.querySelectorAll('.lane').forEach(l => l.remove());
+            document.querySelectorAll('.vehicle, .weather-effect, .ufo, .ufo-beam').forEach(el => el.remove());
+            lanes = [];
+            vehicles = [];
+
+            for (let i = 0; i < laneCount; i++) {
+                const lane = document.createElement('div');
+                lane.className = 'lane';
+                lane.style.height = `${GRID_SIZE}px`;
+                lane.style.top = `${i * GRID_SIZE}px`;
+                
+                let type = 'road';
+                if (i === 0) type = 'finish';
+                else if (i === laneCount - 1) type = 'grass';
+                else if (i % 4 === 0) type = 'grass';
+                
+                lane.classList.add(type);
+                container.appendChild(lane);
+                
+                const isLevelOne = level === 1;
+                const baseSpeed = isLevelOne ? 0.7 : 1.1;
+                const speedMult = 1 + (level - 1) * 0.15;
+                
+                lanes.push({
+                    y: i,
+                    type: type,
+                    speed: type === 'road' ? (Math.random() * 1.8 + baseSpeed) * (Math.random() > 0.5 ? 1 : -1) * speedMult : 0,
+                    lastSpawn: 0,
+                    spawnRate: isLevelOne ? (2800 + Math.random() * 2000) : (1300 + Math.random() * 1300)
+                });
+            }
+
+            playerPos = { x: Math.floor((containerRect.width / GRID_SIZE) / 2), y: laneCount - 1 };
+            updatePlayerPosition();
+            updateHearts();
+            
+            if (level === 1) weatherStatus.innerText = "🌤️ 第一關：路面寬敞";
+            else if (level === 2) weatherStatus.innerText = "⛈️ 第二關：雷雨特報！";
+            else weatherStatus.innerText = "🛸 第三關：UFO 正在強力掃描！";
+        }
+
+        function updateHearts() {
+            heartsEl.innerText = "❤️".repeat(lives);
+        }
+
+        function updatePlayerPosition() {
+            playerEl.style.width = `${GRID_SIZE}px`;
+            playerEl.style.height = `${GRID_SIZE}px`;
+            playerEl.style.left = `${playerPos.x * GRID_SIZE}px`;
+            playerEl.style.top = `${playerPos.y * GRID_SIZE}px`;
+
+            if (playerPos.y === 0) {
+                levelUp();
+            }
+        }
+
+        function takeDamage(msg) {
+            if (isInvincible || !gameActive) return;
+            
+            lives--;
+            updateHearts();
+            
+            if (lives <= 0) {
+                gameOver('失敗！', msg);
+            } else {
+                isInvincible = true;
+                playerEl.classList.add('invincible');
+                setTimeout(() => {
+                    isInvincible = false;
+                    playerEl.classList.remove('invincible');
+                }, 2000);
+            }
+        }
+
+        function movePlayer(dx, dy) {
+            if (!gameActive) return;
+            const nextX = playerPos.x + dx;
+            const nextY = playerPos.y + dy;
+            const maxGridX = Math.floor(containerRect.width / GRID_SIZE) - 1;
+            const maxGridY = Math.floor(containerRect.height / GRID_SIZE) - 1;
+            if (nextX >= 0 && nextX <= maxGridX) playerPos.x = nextX;
+            if (nextY >= 0 && nextY <= maxGridY) playerPos.y = nextY;
+            updatePlayerPosition();
+        }
+
+        function levelUp() {
+            score += 100 * level;
+            
+            // 晉級獎勵：贈送一顆心，最多 3 顆
+            if (lives < 3) {
+                lives++;
+                updateHearts();
+            }
+
+            level++;
+            scoreEl.innerText = score;
+            levelEl.innerText = level;
+            initGame();
+        }
+
+        function spawnVehicle(lane) {
+            if (lane.type !== 'road') return;
+            const vehicle = document.createElement('div');
+            vehicle.className = 'vehicle';
+            vehicle.innerText = VEHICLES[Math.floor(Math.random() * VEHICLES.length)];
+            let startX = lane.speed > 0 ? -50 : containerRect.width + 50;
+            vehicle.style.top = `${lane.y * GRID_SIZE + 4}px`;
+            vehicle.style.left = `${startX}px`;
+            if (lane.speed < 0) vehicle.style.transform = 'scaleX(-1)';
+            container.appendChild(vehicle);
+            vehicles.push({ el: vehicle, x: startX, y: lane.y, speed: lane.speed });
+        }
+
+        function spawnLightning() {
+            if (level < 2 || !gameActive) return;
+            const gridX = Math.floor(Math.random() * (containerRect.width / GRID_SIZE));
+            const gridY = Math.floor(Math.random() * (containerRect.height / GRID_SIZE));
+            const cloud = document.createElement('div');
+            cloud.className = 'weather-effect';
+            cloud.innerText = '☁️';
+            cloud.style.left = `${gridX * GRID_SIZE}px`;
+            cloud.style.top = `${gridY * GRID_SIZE}px`;
+            cloud.style.width = `${GRID_SIZE}px`;
+            cloud.style.height = `${GRID_SIZE}px`;
+            container.appendChild(cloud);
+
+            setTimeout(() => {
+                if (!gameActive) { cloud.remove(); return; }
+                cloud.innerText = '⚡';
+                cloud.classList.add('lightning-flash');
+                if (!isInvincible && playerPos.x === gridX && playerPos.y === gridY) {
+                    takeDamage('被雷劈到了！⚡');
+                }
+                setTimeout(() => cloud.remove(), 300);
+            }, 800);
+        }
+
+        function spawnUfo() {
+            if (level < 3 || !gameActive) return;
+
+            const ufo = document.createElement('div');
+            ufo.className = 'ufo';
+            ufo.innerText = '🛸';
+            
+            const startSide = Math.random() > 0.5 ? -80 : containerRect.width + 80;
+            const startY = 20 + Math.random() * 60;
+            
+            ufo.style.left = `${startSide}px`;
+            ufo.style.top = `${startY}px`;
+            container.appendChild(ufo);
+
+            setTimeout(() => {
+                const currentTargetX = playerPos.x;
+                const targetPixelX = currentTargetX * GRID_SIZE - 10;
+                ufo.style.left = `${targetPixelX}px`;
+                
+                setTimeout(() => {
+                    const beam = document.createElement('div');
+                    beam.className = 'ufo-beam';
+                    beam.style.left = `${targetPixelX}px`;
+                    beam.style.top = `${startY + 40}px`;
+                    beam.style.height = `${containerRect.height}px`;
+                    container.appendChild(beam);
+
+                    setTimeout(() => {
+                        if (!gameActive) { beam.remove(); ufo.remove(); return; }
+                        beam.classList.add('active');
+                        
+                        const chickenCenterX = playerPos.x * GRID_SIZE + 20;
+                        const beamLeft = targetPixelX;
+                        const beamRight = beamLeft + 60;
+
+                        if (!isInvincible && chickenCenterX > beamLeft && chickenCenterX < beamRight) {
+                            playerEl.style.transform = 'scale(0) translateY(-100px)';
+                            takeDamage('被 UFO 瞄準抓走了！👽');
+                            setTimeout(() => {
+                                playerEl.style.transform = 'scale(1)';
+                                updatePlayerPosition();
+                            }, 500);
+                        }
+
+                        setTimeout(() => {
+                            beam.remove();
+                            ufo.style.left = startSide === -80 ? `${containerRect.width + 120}px` : `-120px`;
+                            setTimeout(() => ufo.remove(), 1000);
+                        }, 500);
+                    }, 1200);
+                }, 800);
+            }, 100);
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameActive) return;
+
+            lanes.forEach(lane => {
+                if (lane.type === 'road' && timestamp - lane.lastSpawn > lane.spawnRate) {
+                    spawnVehicle(lane);
+                    lane.lastSpawn = timestamp;
+                }
+            });
+
+            const lightningCooldown = 2200 / (1 + (level-1) * 0.4); 
+            if (level >= 2 && timestamp - lastLightningTime > lightningCooldown) {
+                spawnLightning();
+                if (Math.random() > 0.6) setTimeout(spawnLightning, 200);
+                lastLightningTime = timestamp;
+            }
+
+            const ufoCooldown = 5500 / (1 + (level-2) * 0.3);
+            if (level >= 3 && timestamp - lastUfoTime > ufoCooldown) {
+                spawnUfo();
+                lastUfoTime = timestamp;
+            }
+
+            for (let i = vehicles.length - 1; i >= 0; i--) {
+                const v = vehicles[i];
+                v.x += v.speed;
+                v.el.style.left = `${v.x}px`;
+
+                const chickenLeft = playerPos.x * GRID_SIZE + 8;
+                const chickenRight = (playerPos.x + 1) * GRID_SIZE - 8;
+                const vehicleLeft = v.x + 6;
+                const vehicleRight = v.x + GRID_SIZE - 6;
+
+                if (!isInvincible && v.y === playerPos.y && vehicleRight > chickenLeft && vehicleLeft < chickenRight) {
+                    takeDamage('發生了車禍！💥');
+                }
+
+                if (v.x < -100 || v.x > containerRect.width + 100) {
+                    v.el.remove();
+                    vehicles.splice(i, 1);
+                }
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameOver(title, msg) {
+            gameActive = false;
+            deathTitle.innerText = title;
+            deathMsg.innerText = msg;
+            finalScoreEl.innerText = score;
+            overlay.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            score = 0;
+            level = 1;
+            lives = 3;
+            gameActive = true;
+            isInvincible = false;
+            playerEl.classList.remove('invincible');
+            document.querySelectorAll('.vehicle, .weather-effect, .ufo, .ufo-beam').forEach(el => el.remove());
+            vehicles = [];
+            overlay.classList.add('hidden');
+            initGame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': movePlayer(0, -1); break;
+                case 'ArrowDown': movePlayer(0, 1); break;
+                case 'ArrowLeft': movePlayer(-1, 0); break;
+                case 'ArrowRight': movePlayer(1, 0); break;
+            }
+        });
+
+        window.onload = () => {
+            initGame();
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>

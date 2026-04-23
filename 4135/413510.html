@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji Beat - 節奏遊戲</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // 遊戲配置
+        const LANES = ['D', 'F', 'J', 'K'];
+        const NOTE_SPEED = 5; 
+        const JUDGMENT_LINE_Y = 500; 
+        const HIT_WINDOW = 50; 
+
+        // 簡易圖示組件 (代替原本的 lucide-react)
+        const IconMusic = () => <span className="text-4xl">🎵</span>;
+        const IconHeart = ({ className }) => <span className={className}>❤️</span>;
+        const IconSkull = () => <span className="text-6xl">💀</span>;
+        const IconRefresh = () => <span>🔄</span>;
+
+        const App = () => {
+            const [gameState, setGameState] = useState('START'); 
+            const [score, setScore] = useState(0);
+            const [combo, setCombo] = useState(0);
+            const [maxCombo, setMaxCombo] = useState(0);
+            const [notes, setNotes] = useState([]);
+            const [judgment, setJudgment] = useState(''); 
+            const [hp, setHp] = useState(100);
+            
+            const requestRef = useRef();
+            const lastNoteTime = useRef(0);
+
+            const spawnNote = useCallback(() => {
+                const laneIndex = Math.floor(Math.random() * LANES.length);
+                const newNote = {
+                    id: Date.now() + Math.random(),
+                    lane: laneIndex,
+                    y: -50,
+                    emoji: ['🎵', '🎶', '✨', '⭐'][Math.floor(Math.random() * 4)]
+                };
+                setNotes(prev => [...prev, newNote]);
+            }, []);
+
+            const animate = useCallback((time) => {
+                if (gameState !== 'PLAYING') return;
+
+                if (time - lastNoteTime.current > 600) {
+                    spawnNote();
+                    lastNoteTime.current = time;
+                }
+
+                setNotes(prevNotes => {
+                    let missedCount = 0;
+                    const updatedNotes = prevNotes
+                        .map(note => ({ ...note, y: note.y + NOTE_SPEED }))
+                        .filter(note => {
+                            if (note.y > JUDGMENT_LINE_Y + 100) {
+                                missedCount++;
+                                return false;
+                            }
+                            return true;
+                        });
+
+                    if (missedCount > 0) {
+                        setJudgment('MISS ❌');
+                        setCombo(0);
+                        setHp(h => Math.max(0, h - 5 * missedCount));
+                    }
+                    return updatedNotes;
+                });
+
+                requestRef.current = requestAnimationFrame(animate);
+            }, [gameState, spawnNote]);
+
+            useEffect(() => {
+                if (gameState === 'PLAYING') {
+                    requestRef.current = requestAnimationFrame(animate);
+                } else {
+                    cancelAnimationFrame(requestRef.current);
+                }
+                return () => cancelAnimationFrame(requestRef.current);
+            }, [gameState, animate]);
+
+            useEffect(() => {
+                if (hp <= 0) setGameState('GAMEOVER');
+            }, [hp]);
+
+            const handleHit = useCallback((laneIndex) => {
+                if (gameState !== 'PLAYING') return;
+
+                setNotes(prevNotes => {
+                    const laneNotes = prevNotes.filter(n => n.lane === laneIndex);
+                    if (laneNotes.length === 0) return prevNotes;
+
+                    const closestNote = laneNotes.reduce((prev, curr) => 
+                        Math.abs(curr.y - JUDGMENT_LINE_Y) < Math.abs(prev.y - JUDGMENT_LINE_Y) ? curr : prev
+                    );
+
+                    const distance = Math.abs(closestNote.y - JUDGMENT_LINE_Y);
+
+                    if (distance < HIT_WINDOW * 2.5) {
+                        let points = 0;
+                        let judgeText = '';
+
+                        if (distance < HIT_WINDOW * 0.5) {
+                            judgeText = 'PERFECT 🔥';
+                            points = 100;
+                        } else if (distance < HIT_WINDOW) {
+                            judgeText = 'GREAT ✨';
+                            points = 80;
+                        } else {
+                            judgeText = 'GOOD 👍';
+                            points = 50;
+                        }
+
+                        setJudgment(judgeText);
+                        setScore(s => s + points + Math.floor(combo / 10) * 10);
+                        setCombo(c => {
+                            const newCombo = c + 1;
+                            if (newCombo > maxCombo) setMaxCombo(newCombo);
+                            return newCombo;
+                        });
+                        setHp(h => Math.min(100, h + 2));
+
+                        return prevNotes.filter(n => n.id !== closestNote.id);
+                    }
+                    return prevNotes;
+                });
+            }, [gameState, combo, maxCombo]);
+
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    const key = e.key.toUpperCase();
+                    const index = LANES.indexOf(key);
+                    if (index !== -1) handleHit(index);
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [handleHit]);
+
+            const startGame = () => {
+                setGameState('PLAYING');
+                setScore(0);
+                setCombo(0);
+                setHp(100);
+                setNotes([]);
+                setJudgment('');
+            };
+
+            return (
+                <div className="min-h-screen bg-black text-white font-sans flex flex-col items-center justify-center p-4 overflow-hidden">
+                    <div className="w-full max-w-md flex justify-between items-end mb-4 px-2">
+                        <div className="flex flex-col">
+                            <span className="text-gray-400 text-xs font-bold uppercase tracking-widest">Score</span>
+                            <span className="text-3xl font-mono text-yellow-400">{score.toLocaleString()}</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                            <div className="flex items-center gap-2 mb-1">
+                                <IconHeart className={hp < 30 ? "animate-pulse" : ""} />
+                                <div className="w-24 h-2 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
+                                    <div className={`h-full transition-all duration-300 ${hp < 30 ? 'bg-red-500' : 'bg-pink-500'}`} style={{ width: `${hp}%` }} />
+                                </div>
+                            </div>
+                            <span className="text-xs text-gray-400 font-mono italic">MAX COMBO: {maxCombo}</span>
+                        </div>
+                    </div>
+
+                    <div className="relative w-full max-w-md bg-gray-900/50 border-x-2 border-gray-800 flex" style={{ height: '600px' }}>
+                        {LANES.map((key, i) => (
+                            <div key={key} className="flex-1 border-r border-gray-800/30 last:border-r-0 relative flex justify-center">
+                                <div className="absolute bottom-10 text-gray-600 font-black text-2xl opacity-20">{key}</div>
+                                {notes.filter(n => n.lane === i).map(note => (
+                                    <div key={note.id} className="absolute text-4xl select-none" style={{ top: note.y, transform: 'translateY(-50%)' }}>
+                                        {note.emoji}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+
+                        <div className="absolute w-full border-t-4 border-dashed border-cyan-400/50" style={{ top: JUDGMENT_LINE_Y }}></div>
+
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                            <div className="text-4xl font-black italic text-cyan-300 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] h-12">{judgment}</div>
+                            <div className={`text-6xl font-black mt-2 transition-all ${combo > 0 ? 'scale-110 opacity-100' : 'scale-90 opacity-0'}`}>
+                                {combo}
+                                <span className="text-sm block text-center tracking-widest text-gray-400">COMBO</span>
+                            </div>
+                        </div>
+
+                        {gameState !== 'PLAYING' && (
+                            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-8 text-center">
+                                {gameState === 'START' ? (
+                                    <>
+                                        <div className="w-24 h-24 bg-cyan-500 rounded-3xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(6,182,212,0.5)]">
+                                            <IconMusic />
+                                        </div>
+                                        <h1 className="text-4xl font-black mb-2 uppercase tracking-tighter">Emoji Beat</h1>
+                                        <p className="text-gray-400 mb-8 text-sm">按下 D F J K 對準 🎵 敲擊節奏！</p>
+                                        <button onClick={startGame} className="px-10 py-4 bg-white text-black font-bold rounded-full hover:bg-cyan-400 transition-colors">START MISSION</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <IconSkull />
+                                        <h2 className="text-3xl font-black mb-1 mt-4">MISSION FAILED</h2>
+                                        <div className="bg-gray-800 p-4 rounded-xl w-full mb-6 mt-4">
+                                            <div className="flex justify-between text-sm text-gray-400 mb-1">
+                                                <span>FINAL SCORE</span>
+                                                <span className="text-white">{score}</span>
+                                            </div>
+                                            <div className="flex justify-between text-sm text-gray-400">
+                                                <span>MAX COMBO</span>
+                                                <span className="text-white">{maxCombo}</span>
+                                            </div>
+                                        </div>
+                                        <button onClick={startGame} className="flex items-center gap-2 px-8 py-3 bg-cyan-600 font-bold rounded-full hover:bg-cyan-500 transition-colors">
+                                            <IconRefresh /> TRY AGAIN
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="mt-8 grid grid-cols-4 gap-4 w-full max-w-md">
+                        {LANES.map((key, i) => (
+                            <button key={key} onMouseDown={() => handleHit(i)} className="h-16 rounded-xl bg-gray-800 border-b-4 border-gray-950 flex flex-col items-center justify-center active:translate-y-1 active:border-b-0 transition-all">
+                                <span className="text-xs text-gray-500 font-bold">{key}</span>
+                                <span className="text-lg">🎹</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

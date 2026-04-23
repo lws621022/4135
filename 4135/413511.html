@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 跑酷大冒險</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #f0f9ff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+        }
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F2FE 100%);
+            width: 100%;
+            height: 100vh;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .game-over {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 2.5rem;
+            border-radius: 1.5rem;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            text-align: center;
+            z-index: 10;
+            min-width: 300px;
+        }
+        .heart {
+            display: inline-block;
+            transition: transform 0.3s ease;
+        }
+        .heart-lost {
+            filter: grayscale(100%);
+            opacity: 0.3;
+            transform: scale(0.8);
+        }
+        /* 撞擊閃爍效果 */
+        .flash {
+            animation: flash-red 0.2s;
+        }
+        @keyframes flash-red {
+            0% { background-color: rgba(255,0,0,0); }
+            50% { background-color: rgba(255,0,0,0.5); }
+            100% { background-color: rgba(255,0,0,0); }
+        }
+    </style>
+</head>
+<body id="gameBody">
+
+    <div class="ui-overlay">
+        <div class="text-2xl font-bold text-blue-800 bg-white/60 backdrop-blur-sm p-3 rounded-xl shadow-sm inline-block">
+            分數: <span id="score">0</span>
+        </div>
+        <div id="livesContainer" class="text-3xl bg-white/60 backdrop-blur-sm p-3 rounded-xl shadow-sm inline-block">
+            <span class="heart" id="heart1">❤️</span>
+            <span class="heart" id="heart2">❤️</span>
+            <span class="heart" id="heart3">❤️</span>
+        </div>
+    </div>
+
+    <div id="gameOverScreen" class="game-over">
+        <h1 class="text-4xl font-bold text-red-600 mb-2">遊戲結束! 😵</h1>
+        <p class="text-gray-600 mb-4">做得好！</p>
+        <div class="text-2xl mb-6 font-semibold">最終得分: <span id="finalScore">0</span></div>
+        <button onclick="resetGame()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-10 rounded-full transition-all transform hover:scale-105 active:scale-95 shadow-lg">
+            再玩一次 🔄
+        </button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const finalScoreElement = document.getElementById('finalScore');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const gameBody = document.getElementById('gameBody');
+
+        // 音效系統 (使用 Web Audio API)
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'jump') {
+                oscillator.type = 'triangle';
+                oscillator.frequency.setValueAtTime(150, now);
+                oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.1);
+                gainNode.gain.setValueAtTime(0.1, now);
+                gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+                oscillator.start();
+                oscillator.stop(now + 0.2);
+            } else if (type === 'hit') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(100, now);
+                oscillator.frequency.linearRampToValueAtTime(40, now + 0.2);
+                gainNode.gain.setValueAtTime(0.2, now);
+                gainNode.gain.linearRampToValueAtTime(0, now + 0.3);
+                oscillator.start();
+                oscillator.stop(now + 0.3);
+            } else if (type === 'score') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(800, now);
+                oscillator.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+                gainNode.gain.setValueAtTime(0.05, now);
+                gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
+                oscillator.start();
+                oscillator.stop(now + 0.1);
+            }
+        }
+
+        // 遊戲狀態
+        let gameActive = true;
+        let score = 0;
+        let lives = 3;
+        let gameSpeed = 6;
+        let frameCount = 0;
+        let invincibilityFrames = 0; // 撞擊後的無敵時間
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 玩家設定
+        const player = {
+            x: 80,
+            y: canvas.height - 150,
+            width: 65,
+            height: 65,
+            vy: 0,
+            gravity: 0.8,
+            jumpPower: -18,
+            isGrounded: false,
+            emoji: '🏃‍♂️',
+            draw() {
+                ctx.save();
+                // 無敵時閃爍效果
+                if (invincibilityFrames > 0 && Math.floor(frameCount / 5) % 2 === 0) {
+                    ctx.globalAlpha = 0.5;
+                }
+                ctx.font = `${this.width}px serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.emoji, this.x + this.width / 2, this.y + this.height / 2);
+                ctx.restore();
+            },
+            update() {
+                this.vy += this.gravity;
+                this.y += this.vy;
+
+                const groundY = canvas.height - 100;
+                if (this.y + this.height > groundY) {
+                    this.y = groundY - this.height;
+                    this.vy = 0;
+                    this.isGrounded = true;
+                    this.emoji = '🏃‍♂️';
+                } else {
+                    this.isGrounded = false;
+                    this.emoji = '🤸‍♂️';
+                }
+
+                if (invincibilityFrames > 0) invincibilityFrames--;
+            },
+            jump() {
+                if (this.isGrounded) {
+                    this.vy = this.jumpPower;
+                    this.isGrounded = false;
+                    playSound('jump');
+                }
+            }
+        };
+
+        const obstacles = [];
+        const backgroundItems = [];
+        const obstacleEmojis = ['🌵', '🚧', '🧱', '📦', '🔥'];
+        const clouds = ['☁️', '🌤️', '💨'];
+
+        class Obstacle {
+            constructor() {
+                this.width = 50;
+                this.height = 50;
+                this.x = canvas.width + 100;
+                this.y = canvas.height - 100 - this.height;
+                this.emoji = obstacleEmojis[Math.floor(Math.random() * obstacleEmojis.length)];
+                this.passed = false;
+                this.hit = false;
+            }
+            draw() {
+                ctx.font = '45px serif';
+                ctx.fillText(this.emoji, this.x + this.width/2, this.y + this.height/2);
+            }
+            update() {
+                this.x -= gameSpeed;
+            }
+        }
+
+        class Cloud {
+            constructor() {
+                this.x = canvas.width + 100;
+                this.y = Math.random() * (canvas.height / 2);
+                this.speed = (Math.random() * 1.5) + 0.5;
+                this.emoji = clouds[Math.floor(Math.random() * clouds.length)];
+                this.size = Math.random() * 40 + 40;
+            }
+            draw() {
+                ctx.font = `${this.size}px serif`;
+                ctx.fillText(this.emoji, this.x, this.y);
+            }
+            update() {
+                this.x -= this.speed;
+            }
+        }
+
+        function drawGround() {
+            ctx.fillStyle = '#4ade80'; 
+            ctx.fillRect(0, canvas.height - 100, canvas.width, 100);
+            
+            ctx.font = '24px serif';
+            for(let i = -100; i < canvas.width + 100; i += 120) {
+                let offset = (frameCount * gameSpeed) % 120;
+                ctx.fillText('🌱', i - offset + 120, canvas.height - 70);
+            }
+        }
+
+        function checkCollision(p, o) {
+            // 縮小判定範圍讓遊戲更公平
+            const padding = 15;
+            return (
+                p.x + padding < o.x + o.width - padding &&
+                p.x + p.width - padding > o.x + padding &&
+                p.y + padding < o.y + o.height - padding &&
+                p.y + p.height - padding > o.y + padding
+            );
+        }
+
+        function spawnManager() {
+            frameCount++;
+            
+            if (frameCount % Math.max(50, Math.floor(100 - (gameSpeed * 3))) === 0) {
+                obstacles.push(new Obstacle());
+            }
+
+            if (frameCount % 120 === 0) {
+                backgroundItems.push(new Cloud());
+            }
+
+            if (frameCount % 600 === 0) {
+                gameSpeed += 0.4;
+            }
+        }
+
+        function updateLivesUI() {
+            for (let i = 1; i <= 3; i++) {
+                const heart = document.getElementById(`heart${i}`);
+                if (i > lives) {
+                    heart.classList.add('heart-lost');
+                } else {
+                    heart.classList.remove('heart-lost');
+                }
+            }
+        }
+
+        function handleHit() {
+            if (invincibilityFrames > 0) return;
+
+            lives--;
+            updateLivesUI();
+            playSound('hit');
+            invincibilityFrames = 90; // 約 1.5 秒無敵
+
+            // 畫面閃爍紅光效果
+            gameBody.classList.add('flash');
+            setTimeout(() => gameBody.classList.remove('flash'), 200);
+
+            if (lives <= 0) {
+                endGame();
+            }
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            spawnManager();
+            drawGround();
+
+            for (let i = backgroundItems.length - 1; i >= 0; i--) {
+                backgroundItems[i].update();
+                backgroundItems[i].draw();
+                if (backgroundItems[i].x < -200) backgroundItems.splice(i, 1);
+            }
+
+            player.update();
+            player.draw();
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].update();
+                obstacles[i].draw();
+
+                if (!obstacles[i].passed && obstacles[i].x < player.x) {
+                    obstacles[i].passed = true;
+                    score++;
+                    scoreElement.innerText = score;
+                    if (score % 10 === 0) playSound('score');
+                }
+
+                if (!obstacles[i].hit && checkCollision(player, obstacles[i])) {
+                    obstacles[i].hit = true;
+                    handleHit();
+                }
+
+                if (obstacles[i].x < -100) {
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        function endGame() {
+            gameActive = false;
+            player.emoji = '😵';
+            finalScoreElement.innerText = score;
+            gameOverScreen.style.display = 'block';
+        }
+
+        function resetGame() {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            score = 0;
+            lives = 3;
+            gameSpeed = 6;
+            frameCount = 0;
+            invincibilityFrames = 0;
+            obstacles.length = 0;
+            backgroundItems.length = 0;
+            gameActive = true;
+            scoreElement.innerText = '0';
+            updateLivesUI();
+            gameOverScreen.style.display = 'none';
+            player.y = canvas.height - 150;
+            player.vy = 0;
+            player.emoji = '🏃‍♂️';
+            update();
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                player.jump();
+            }
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            player.jump();
+            e.preventDefault();
+        }, { passive: false });
+
+        update();
+
+    </script>
+</body>
+</html>

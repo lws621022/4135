@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>搜打徹：戰術撤離 (Mobile Action Update)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&display=swap');
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'JetBrains Mono', monospace; user-select: none; touch-action: none; }
+        #lobby-screen {
+            position: absolute; inset: 0; background: radial-gradient(circle, #1a1a1a 0%, #000 100%); z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px;
+        }
+        .btn {
+            background: transparent; border: 2px solid #4ade80; color: #4ade80;
+            padding: 12px 30px; margin: 10px; cursor: pointer; font-size: 1rem;
+            text-transform: uppercase; letter-spacing: 2px; transition: all 0.2s; pointer-events: auto;
+        }
+        .btn:hover { background: #4ade80; color: black; box-shadow: 0 0 15px #4ade80; }
+        
+        /* HUD & UI */
+        #hud { position: absolute; inset: 0; pointer-events: none; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; z-index: 50; }
+        #game-message {
+            position: absolute; top: 120px; left: 50%; transform: translateX(-50%);
+            color: #4ade80; font-size: 1.5rem; text-shadow: 0 0 10px black; text-align: center; z-index: 60;
+        }
+        #interaction-hint {
+            position: absolute; top: 60%; left: 50%; transform: translateX(-50%);
+            color: white; font-size: 1.2rem; background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 4px;
+            display: none; z-index: 55; border: 1px solid #4ade80;
+        }
+
+        /* 手機虛擬按鍵 */
+        #mobile-controls {
+            position: absolute; bottom: 30px; right: 30px;
+            display: none; flex-direction: column; gap: 15px;
+            pointer-events: auto; z-index: 70;
+        }
+        .action-circle {
+            width: 70px; height: 70px; border-radius: 50%;
+            background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; font-weight: bold; backdrop-filter: blur(4px);
+            transition: transform 0.1s, background 0.1s;
+        }
+        .action-circle:active { transform: scale(0.9); background: rgba(74, 222, 128, 0.4); }
+        .action-circle.heal { border-color: #ef4444; color: #ef4444; }
+        .action-circle.use { border-color: #4ade80; color: #4ade80; }
+        .action-circle span { font-size: 0.7rem; opacity: 0.6; }
+
+        #settings-modal {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 200;
+            display: none; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .setting-row { display: flex; justify-content: space-between; align-items: center; width: 300px; padding: 15px; border-bottom: 1px solid #333; }
+        .key-box { background: #222; border: 1px solid #444; color: #4ade80; padding: 5px 15px; min-width: 60px; text-align: center; cursor: pointer; }
+        
+        .bar { width: 200px; height: 10px; background: rgba(255,255,255,0.05); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
+        .fill { height: 100%; background: #4ade80; transition: width 0.3s; }
+        #heal-effect { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            color: #4ade80; font-weight: bold; font-size: 2rem; display: none; pointer-events: none;
+            text-shadow: 0 0 20px #4ade80;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="lobby-screen">
+        <h1 class="text-white text-5xl md:text-7xl mb-4 italic font-bold tracking-tighter">ENGAGE SEARCH EXTRACT</h1>
+        <p class="text-green-500 mb-8 tracking-[0.3em] text-sm uppercase">戰術撤離競技場</p>
+        <div id="loading-hint" class="text-white/30 text-xs mb-4">系統初始化中...</div>
+        <div class="flex flex-col md:flex-row">
+            <button class="btn" onclick="window.startMode('single')">單人模式 (搜索與撤離)</button>
+            <button class="btn" onclick="window.startMode('multi')">多人模式 (2V2 對抗)</button>
+        </div>
+        <button class="mt-6 text-gray-500 hover:text-white text-xs uppercase tracking-widest pointer-events-auto" onclick="window.openSettings()">[ 鍵位設置 ]</button>
+    </div>
+
+    <!-- 手機虛擬按鈕組 -->
+    <div id="mobile-controls">
+        <div class="action-circle heal" id="mobile-heal">
+            <div class="text-lg">Q</div>
+            <span>補血</span>
+        </div>
+        <div class="action-circle use" id="mobile-use">
+            <div class="text-lg">E</div>
+            <span>拾取</span>
+        </div>
+    </div>
+
+    <div id="settings-modal">
+        <h2 class="text-white text-2xl mb-8 font-bold">按鍵設置</h2>
+        <div class="setting-row"><span class="text-gray-400">向前</span><div id="bind-up" class="key-box" onclick="window.startBinding('up')">W</div></div>
+        <div class="setting-row"><span class="text-gray-400">向後</span><div id="bind-down" class="key-box" onclick="window.startBinding('down')">S</div></div>
+        <div class="setting-row"><span class="text-gray-400">向左</span><div id="bind-left" class="key-box" onclick="window.startBinding('left')">A</div></div>
+        <div class="setting-row"><span class="text-gray-400">向右</span><div id="bind-right" class="key-box" onclick="window.startBinding('right')">D</div></div>
+        <div class="setting-row"><span class="text-gray-400">互動/拾取</span><div id="bind-use" class="key-box" onclick="window.startBinding('use')">E</div></div>
+        <div class="setting-row"><span class="text-gray-400">使用補血包</span><div id="bind-heal" class="key-box" onclick="window.startBinding('heal')">Q</div></div>
+        <button class="btn mt-10" onclick="window.closeSettings()">完成</button>
+    </div>
+
+    <div id="game-message" style="display: none;"></div>
+    <div id="interaction-hint">按 E 鍵拾取</div>
+    <div id="heal-effect">+HP 治療中</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hud" style="display: none;">
+        <div class="flex justify-between items-start">
+            <div>
+                <div id="team-tag" class="text-xs font-bold mb-1 uppercase tracking-widest text-white">TEAM: ...</div>
+                <div class="bar"><div id="hp-fill" class="fill"></div></div>
+                <div id="medkit-counter" class="text-[10px] text-red-500 mt-1 font-bold">補血包: 3 (Q)</div>
+            </div>
+            <button id="restart-btn" class="btn text-xs px-4 py-2" style="display:none; pointer-events: auto;" onclick="location.reload()">重新開始</button>
+        </div>
+        <div class="flex justify-between items-end">
+            <div>
+                <div class="text-2xl text-white font-bold" id="weapon-display">手槍</div>
+                <div class="text-[10px] text-gray-500 uppercase">紅: 醫療包 | 黃: 衝鋒槍</div>
+            </div>
+            <div id="touch-info" class="text-white/20 text-[10px] uppercase">左: 移動 | 右: 瞄準射擊</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let db, auth, appId;
+        const WORLD_SIZE = 3200;
+        const TEAMS = { ALPHA: 'Alpha', BRAVO: 'Bravo' };
+        const WEAPON_TYPES = {
+            PISTOL: { name: '手槍', fireRate: 350, auto: false, color: '#94a3b8' },
+            SMG: { name: '衝鋒槍', fireRate: 110, auto: true, color: '#fbbf24' }
+        };
+
+        let keyBinds = { up: 'w', down: 's', left: 'a', right: 'd', use: 'e', heal: 'q' };
+        let settingKey = null;
+
+        let state = {
+            mode: null, user: null, gameStarted: false,
+            remotePlayers: {}, lastNetworkUpdate: 0,
+            isTouch: ('ontouchstart' in window) || (navigator.maxTouchPoints > 0),
+            extractZone: null, extractTimer: 0, isExtracting: false,
+            gameOver: false, message: ""
+        };
+
+        let player = {
+            id: '', team: null, worldX: WORLD_SIZE / 2, worldY: WORLD_SIZE / 2,
+            size: 22, speed: 4.5, hp: 100, angle: 0, 
+            weapon: WEAPON_TYPES.PISTOL, lastShot: 0,
+            medkits: 3
+        };
+
+        let bullets = [], enemies = [], lootDrops = [], obstacles = [], bushes = [];
+        let camera = { x: 0, y: 0 }, keys = {}, mouse = { x: 0, y: 0, down: false };
+        let joystickMove = { active: false, startX: 0, startY: 0, dx: 0, dy: 0, id: null };
+        let joystickAim = { active: false, startX: 0, startY: 0, dx: 0, dy: 0, id: null };
+        
+        let nearestLoot = null;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 初始化手機按鈕監聽
+        function setupMobileControls() {
+            if (state.isTouch) {
+                document.getElementById('mobile-controls').style.display = 'flex';
+                document.getElementById('mobile-use').addEventListener('touchstart', (e) => { e.preventDefault(); pickupLoot(); });
+                document.getElementById('mobile-heal').addEventListener('touchstart', (e) => { e.preventDefault(); useMedkit(); });
+            }
+        }
+
+        window.openSettings = () => {
+            document.getElementById('settings-modal').style.display = 'flex';
+            updateSettingsUI();
+        };
+        window.closeSettings = () => {
+            document.getElementById('settings-modal').style.display = 'none';
+        };
+        window.startBinding = (action) => {
+            settingKey = action;
+            const btn = document.getElementById(`bind-${action}`);
+            btn.innerText = '等待輸入...';
+            btn.classList.add('bg-green-500', 'text-black');
+        };
+
+        function updateSettingsUI() {
+            document.getElementById('bind-up').innerText = keyBinds.up.toUpperCase();
+            document.getElementById('bind-down').innerText = keyBinds.down.toUpperCase();
+            document.getElementById('bind-left').innerText = keyBinds.left.toUpperCase();
+            document.getElementById('bind-right').innerText = keyBinds.right.toUpperCase();
+            document.getElementById('bind-use').innerText = keyBinds.use.toUpperCase();
+            document.getElementById('bind-heal').innerText = keyBinds.heal.toUpperCase();
+            ['up','down','left','right','use','heal'].forEach(a => document.getElementById(`bind-${a}`).classList.remove('bg-green-500', 'text-black'));
+        }
+
+        async function setupFirebase() {
+            try {
+                if (typeof __firebase_config === 'undefined') return;
+                const config = JSON.parse(__firebase_config);
+                const app = initializeApp(config);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user && state.mode === 'multi') {
+                        state.user = user;
+                        player.id = user.uid;
+                        player.team = Math.random() > 0.5 ? TEAMS.ALPHA : TEAMS.BRAVO;
+                        setupMultiplayerListeners();
+                        initGame();
+                    }
+                });
+                document.getElementById('loading-hint').innerText = "系統就緒";
+            } catch (e) {
+                console.error("Firebase Error:", e);
+                document.getElementById('loading-hint').innerText = "初始化失敗";
+            }
+        }
+
+        window.startMode = async (mode) => {
+            state.mode = mode;
+            document.getElementById('lobby-screen').style.display = 'none';
+            document.getElementById('hud').style.display = 'flex';
+            setupMobileControls();
+            if (mode === 'multi') {
+                if (!auth) await setupFirebase();
+                if (auth) {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                }
+            } else {
+                player.team = TEAMS.ALPHA;
+                initGame();
+            }
+        };
+
+        function setupMultiplayerListeners() {
+            if (!state.user || !db) return;
+            const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
+            onSnapshot(playersCol, (snapshot) => {
+                snapshot.docChanges().forEach(change => {
+                    if (change.doc.id !== state.user.uid) {
+                        if (change.type === 'removed') delete state.remotePlayers[change.doc.id];
+                        else state.remotePlayers[change.doc.id] = change.doc.data();
+                    }
+                });
+            }, (err) => console.error("Snapshot Error:", err));
+        }
+
+        function initGame() {
+            obstacles = []; bushes = []; lootDrops = []; enemies = [];
+            for(let i=0; i<25; i++) obstacles.push({ x: Math.random()*(WORLD_SIZE-200), y: Math.random()*(WORLD_SIZE-200), w: 100+Math.random()*150, h: 100+Math.random()*150 });
+            for(let i=0; i<40; i++) bushes.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, size: 60 + Math.random()*40 });
+            spawnLoot(15);
+            if (state.mode === 'single') {
+                spawnEnemies(10);
+                setTimeout(() => {
+                    state.extractZone = { x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, radius: 180 };
+                    state.message = "撤離點已開啟！前往綠色區域！";
+                    setTimeout(() => state.message = "", 5000);
+                }, 15000);
+            }
+            state.gameStarted = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function spawnLoot(count) {
+            const types = ['smg', 'medkit'];
+            for(let i=0; i<count; i++) lootDrops.push({ id: Math.random(), x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, type: types[Math.floor(Math.random()*types.length)] });
+        }
+
+        function spawnEnemies(count) {
+            for (let i = 0; i < count; i++) enemies.push({ id: Math.random(), worldX: Math.random()*WORLD_SIZE, worldY: Math.random()*WORLD_SIZE, size: 20, speed: 1.5, hp: 3 });
+        }
+
+        function fireBullet() {
+            if (state.gameOver || !state.gameStarted) return;
+            const now = Date.now();
+            if (now - player.lastShot < player.weapon.fireRate) return;
+            player.lastShot = now;
+            bullets.push({
+                worldX: player.worldX + Math.cos(player.angle) * 30,
+                worldY: player.worldY + Math.sin(player.angle) * 30,
+                vx: Math.cos(player.angle) * 18, vy: Math.sin(player.angle) * 18,
+                life: 60, team: player.team
+            });
+        }
+
+        function triggerHealEffect() {
+            const el = document.getElementById('heal-effect');
+            el.style.display = 'block';
+            setTimeout(() => { el.style.display = 'none'; }, 800);
+        }
+
+        function useMedkit() {
+            if (player.medkits > 0 && player.hp < 100) {
+                player.medkits--;
+                player.hp = Math.min(100, player.hp + 40);
+                triggerHealEffect();
+            }
+        }
+
+        function pickupLoot() {
+            if (!nearestLoot) return;
+            const l = nearestLoot;
+            if (l.type === 'smg') player.weapon = WEAPON_TYPES.SMG;
+            else if (l.type === 'medkit') player.medkits++;
+            lootDrops = lootDrops.filter(item => item.id !== l.id);
+            nearestLoot = null;
+        }
+
+        function update() {
+            if (!state.gameStarted || state.gameOver) return;
+
+            let mx = 0, my = 0;
+            if (state.isTouch && joystickMove.active) {
+                mx = joystickMove.dx / 50; my = joystickMove.dy / 50;
+            } else {
+                if (keys[keyBinds.up]) my -= 1;
+                if (keys[keyBinds.down]) my += 1;
+                if (keys[keyBinds.left]) mx -= 1;
+                if (keys[keyBinds.right]) mx += 1;
+            }
+            if (mx !== 0 || my !== 0) {
+                const mag = Math.hypot(mx, my);
+                player.worldX = Math.max(0, Math.min(WORLD_SIZE, player.worldX + (mx/mag) * player.speed));
+                player.worldY = Math.max(0, Math.min(WORLD_SIZE, player.worldY + (my/mag) * player.speed));
+            }
+
+            if (state.isTouch && joystickAim.active) {
+                player.angle = Math.atan2(joystickAim.dy, joystickAim.dx);
+                if (player.weapon.auto || Math.hypot(joystickAim.dx, joystickAim.dy) > 40) fireBullet();
+            } else if (!state.isTouch) {
+                player.angle = Math.atan2(mouse.y - (player.worldY - camera.y), mouse.x - (player.worldX - camera.x));
+                if (mouse.down && player.weapon.auto) fireBullet();
+            }
+
+            camera.x = player.worldX - canvas.width / 2;
+            camera.y = player.worldY - canvas.height / 2;
+
+            nearestLoot = null;
+            let minDist = 60;
+            lootDrops.forEach(l => {
+                const d = Math.hypot(player.worldX - l.x, player.worldY - l.y);
+                if (d < minDist) { minDist = d; nearestLoot = l; }
+            });
+
+            bullets = bullets.filter(b => {
+                b.worldX += b.vx; b.worldY += b.vy; b.life--;
+                for (let o of obstacles) if (b.worldX > o.x && b.worldX < o.x+o.w && b.worldY > o.y && b.worldY < o.y+o.h) return false;
+                if (state.mode === 'single') {
+                    enemies.forEach(e => {
+                        if (Math.hypot(b.worldX - e.worldX, b.worldY - e.worldY) < e.size) { e.hp--; b.life = 0; if(e.hp<=0) spawnLoot(1); }
+                    });
+                }
+                return b.life > 0;
+            });
+
+            if (state.mode === 'single') {
+                enemies = enemies.filter(e => e.hp > 0);
+                enemies.forEach(e => {
+                    const dist = Math.hypot(player.worldX - e.worldX, player.worldY - e.worldY);
+                    if (dist < 500) {
+                        const ang = Math.atan2(player.worldY - e.worldY, player.worldX - e.worldX);
+                        e.worldX += Math.cos(ang) * e.speed; e.worldY += Math.sin(ang) * e.speed;
+                        if (dist < 40) player.hp -= 0.5;
+                    }
+                });
+            }
+
+            if (state.extractZone && Math.hypot(player.worldX - state.extractZone.x, player.worldY - state.extractZone.y) < state.extractZone.radius) {
+                state.isExtracting = true; state.extractTimer += 1/60;
+                if (state.extractTimer >= 5) { state.gameOver = true; state.message = "撤離成功！"; }
+            } else { state.isExtracting = false; state.extractTimer = 0; }
+
+            if (player.hp <= 0) { state.gameOver = true; state.message = "你戰死了。"; }
+
+            if (state.mode === 'multi' && auth?.currentUser && Date.now() - state.lastNetworkUpdate > 100) {
+                state.lastNetworkUpdate = Date.now();
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', auth.currentUser.uid), {
+                    x: player.worldX, y: player.worldY, angle: player.angle, hp: player.hp, team: player.team
+                }, { merge: true });
+            }
+            updateUI();
+        }
+
+        function updateUI() {
+            document.getElementById('hp-fill').style.width = `${player.hp}%`;
+            document.getElementById('weapon-display').innerText = player.weapon.name;
+            document.getElementById('team-tag').innerText = `TEAM: ${player.team || '...'}`;
+            document.getElementById('medkit-counter').innerText = `補血包: ${player.medkits}`;
+            
+            const hint = document.getElementById('interaction-hint');
+            const mobileUse = document.getElementById('mobile-use');
+            if (nearestLoot) {
+                hint.innerText = `按 [${keyBinds.use.toUpperCase()}] 拾取 ${nearestLoot.type === 'medkit' ? '醫療包' : '衝鋒槍'}`;
+                hint.style.display = state.isTouch ? 'none' : 'block';
+                if (mobileUse) mobileUse.style.borderColor = "#4ade80";
+            } else {
+                hint.style.display = 'none';
+                if (mobileUse) mobileUse.style.borderColor = "rgba(255,255,255,0.3)";
+            }
+
+            const msgEl = document.getElementById('game-message');
+            if (state.message) { msgEl.innerText = state.message; msgEl.style.display = 'block'; }
+            else if (state.isExtracting) { msgEl.innerText = `撤離中... ${Math.ceil(5 - state.extractTimer)}s`; msgEl.style.display = 'block'; }
+            else msgEl.style.display = 'none';
+            if (state.gameOver) document.getElementById('restart-btn').style.display = 'block';
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save(); ctx.translate(-camera.x, -camera.y);
+            
+            ctx.strokeStyle = '#111';
+            for(let i=0; i<=WORLD_SIZE; i+=200) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(WORLD_SIZE, i); ctx.stroke(); }
+            
+            if (state.extractZone) { ctx.fillStyle = 'rgba(74, 222, 128, 0.15)'; ctx.beginPath(); ctx.arc(state.extractZone.x, state.extractZone.y, state.extractZone.radius, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = '#4ade80'; ctx.stroke(); }
+            
+            bushes.forEach(b => { ctx.fillStyle = '#064e3b'; ctx.beginPath(); ctx.arc(b.x, b.y, b.size, 0, Math.PI*2); ctx.fill(); });
+            ctx.fillStyle = '#1e293b'; obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.w, o.h));
+            
+            lootDrops.forEach(l => { 
+                const isNearest = nearestLoot && nearestLoot.id === l.id;
+                if (isNearest) {
+                    ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2; ctx.beginPath();
+                    ctx.arc(l.x, l.y, 25 + Math.sin(Date.now()/200)*5, 0, Math.PI*2); ctx.stroke();
+                }
+                if (l.type === 'medkit') {
+                    ctx.fillStyle = '#ef4444'; ctx.fillRect(l.x-15, l.y-15, 30, 30);
+                    ctx.fillStyle = 'white'; ctx.fillRect(l.x-10, l.y-2, 20, 4); ctx.fillRect(l.x-2, l.y-10, 4, 20);
+                } else {
+                    ctx.fillStyle = '#fbbf24'; ctx.fillRect(l.x-15, l.y-15, 30, 30);
+                }
+            });
+
+            Object.values(state.remotePlayers).forEach(p => { ctx.fillStyle = p.team === TEAMS.ALPHA ? '#3b82f6' : '#ef4444'; ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, Math.PI*2); ctx.fill(); });
+            enemies.forEach(e => { ctx.fillStyle = '#4b5563'; ctx.beginPath(); ctx.arc(e.worldX, e.worldY, e.size, 0, Math.PI*2); ctx.fill(); });
+            
+            if (player.hp > 0) { 
+                ctx.save(); ctx.translate(player.worldX, player.worldY); 
+                ctx.fillStyle = player.team === TEAMS.ALPHA ? '#3b82f6' : '#ef4444'; 
+                ctx.beginPath(); ctx.arc(0, 0, player.size, 0, Math.PI*2); ctx.fill(); 
+                ctx.rotate(player.angle); ctx.fillStyle = player.weapon.color; ctx.fillRect(15, -4, 25, 8); 
+                ctx.restore(); 
+            }
+            
+            bullets.forEach(b => { ctx.fillStyle = '#fde047'; ctx.beginPath(); ctx.arc(b.worldX, b.worldY, 4, 0, Math.PI*2); ctx.fill(); });
+            ctx.restore();
+
+            if (state.isTouch) {
+                const drawJ = (j, col) => { if(!j.active) return; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(j.startX, j.startY, 50, 0, Math.PI*2); ctx.stroke(); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(j.startX+j.dx, j.startY+j.dy, 20, 0, Math.PI*2); ctx.fill(); };
+                drawJ(joystickMove, 'rgba(255,255,255,0.2)'); drawJ(joystickAim, 'rgba(255,0,0,0.2)');
+            }
+        }
+
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+        window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+        window.dispatchEvent(new Event('resize'));
+        window.addEventListener('keydown', e => {
+            const key = e.key.toLowerCase();
+            if (settingKey) { keyBinds[settingKey] = key; settingKey = null; updateSettingsUI(); return; }
+            keys[key] = true;
+            if (key === keyBinds.use) pickupLoot();
+            if (key === keyBinds.heal) useMedkit();
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+        window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+        window.addEventListener('mousedown', () => { mouse.down = true; fireBullet(); });
+        window.addEventListener('mouseup', () => mouse.down = false);
+
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            for (let t of e.changedTouches) {
+                // 排除按鈕區域的點擊，讓按鈕自己處理事件
+                const isBtn = document.elementFromPoint(t.clientX, t.clientY)?.closest('.action-circle');
+                if (isBtn) continue;
+
+                if (t.clientX < window.innerWidth/2) { joystickMove.active = true; joystickMove.id = t.identifier; joystickMove.startX = t.clientX; joystickMove.startY = t.clientY; }
+                else { joystickAim.active = true; joystickAim.id = t.identifier; joystickAim.startX = t.clientX; joystickAim.startY = t.clientY; }
+            }
+        }, {passive:false});
+
+        canvas.addEventListener('touchmove', e => {
+            for (let t of e.changedTouches) {
+                if (joystickMove.id === t.identifier) { 
+                    const ang = Math.atan2(t.clientY-joystickMove.startY, t.clientX-joystickMove.startX);
+                    const d = Math.min(50, Math.hypot(t.clientX-joystickMove.startX, t.clientY-joystickMove.startY));
+                    joystickMove.dx = Math.cos(ang)*d; joystickMove.dy = Math.sin(ang)*d;
+                }
+                if (joystickAim.id === t.identifier) {
+                    const ang = Math.atan2(t.clientY-joystickAim.startY, t.clientX-joystickAim.startX);
+                    const d = Math.min(50, Math.hypot(t.clientX-joystickAim.startX, t.clientY-joystickAim.startY));
+                    joystickAim.dx = Math.cos(ang)*d; joystickAim.dy = Math.sin(ang)*d;
+                }
+            }
+        }, {passive:false});
+
+        canvas.addEventListener('touchend', e => {
+            for (let t of e.changedTouches) {
+                if (joystickMove.id === t.identifier) { joystickMove.active = false; joystickMove.dx = 0; joystickMove.dy = 0; joystickMove.id = null; }
+                if (joystickAim.id === t.identifier) { joystickAim.active = false; joystickAim.dx = 0; joystickAim.dy = 0; joystickAim.id = null; }
+            }
+        });
+
+        window.onload = () => { setupFirebase(); };
+    </script>
+</body>
+</html>

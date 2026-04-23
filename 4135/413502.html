@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 五子棋 - 機器人輪流對戰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            /* 調整棋盤顏色以搭配鑽石藍背景 */
+            --board-color: #e3c16f;
+            --line-color: #5d4037;
+            /* 鑽石藍背景色 */
+            --diamond-blue: #b9f2ff;
+        }
+        body {
+            background-color: var(--diamond-blue);
+            font-family: "Microsoft JhengHei", sans-serif;
+            background-image: radial-gradient(circle at center, #ffffff 0%, var(--diamond-blue) 100%);
+        }
+        .board {
+            display: grid;
+            grid-template-columns: repeat(15, 1fr);
+            background-color: var(--board-color);
+            border: 4px solid var(--line-color);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.25);
+            touch-action: manipulation;
+            aspect-ratio: 1 / 1;
+            border-radius: 4px;
+        }
+        .cell {
+            border: 0.5px solid rgba(93, 64, 55, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2vw;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            position: relative;
+        }
+        @media (min-width: 768px) {
+            .cell { font-size: 1.5rem; }
+            .board { width: 600px; height: 600px; }
+        }
+        .cell:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        .cell.last-move::after {
+            content: '';
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: #ff4444;
+            border-radius: 50%;
+            top: 2px;
+            right: 2px;
+            box-shadow: 0 0 4px rgba(0,0,0,0.3);
+        }
+        .status-card {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 1.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px rgba(0, 180, 216, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+        .bot-thinking {
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(0.98); }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="max-w-4xl w-full flex flex-col md:flex-row gap-8 items-center justify-center">
+        <!-- 遊戲狀態資訊 -->
+        <div class="status-card w-full md:w-64 flex flex-col gap-4 text-center">
+            <h1 class="text-2xl font-bold text-gray-800 tracking-wider">五子棋 AI 版</h1>
+            <div id="turn-indicator" class="py-2 px-4 rounded-full bg-cyan-100 text-cyan-800 font-semibold transition-all text-sm shadow-sm">
+                等待開始...
+            </div>
+            <div id="role-hint" class="text-xs text-gray-600 bg-white/50 p-2 rounded-xl border border-cyan-200">
+                載入中...
+            </div>
+            <div class="text-[10px] text-cyan-600 font-medium">
+                * 每一局結束後機器人會自動換色
+            </div>
+            <button onclick="resetGameManually()" class="bg-cyan-600 hover:bg-cyan-700 text-white py-2 px-6 rounded-xl transition-all font-medium shadow-md hover:shadow-lg active:scale-95">
+                重新開始
+            </button>
+        </div>
+
+        <!-- 棋盤容器 -->
+        <div id="game-board" class="board w-full max-w-[90vw]">
+            <!-- JavaScript 會在此生成 15x15 的格子 -->
+        </div>
+    </div>
+
+    <!-- 勝負彈窗 -->
+    <div id="modal" class="fixed inset-0 bg-cyan-900/40 backdrop-blur-sm hidden flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl border border-white">
+            <div id="winner-emoji" class="text-7xl mb-4">🏆</div>
+            <h2 id="winner-text" class="text-2xl font-bold mb-6 text-gray-800">黑棋獲勝！</h2>
+            <button onclick="resetGameManually()" class="w-full bg-cyan-500 hover:bg-cyan-600 text-white py-4 rounded-2xl font-bold transition-transform active:scale-95 shadow-lg">
+                下一局 (換色)
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const BOARD_SIZE = 15;
+        const EMPTY = 0;
+        const BLACK = 1;
+        const WHITE = 2;
+        
+        let board = [];
+        let currentPlayer = BLACK; 
+        let botPlayer = BLACK;    
+        let gameActive = true;
+        let lastMove = null;
+        let isBotThinking = false;
+
+        const boardElement = document.getElementById('game-board');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const roleHint = document.getElementById('role-hint');
+        const modal = document.getElementById('modal');
+        const winnerText = document.getElementById('winner-text');
+
+        function initGame() {
+            board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(EMPTY));
+            boardElement.innerHTML = '';
+            gameActive = true;
+            currentPlayer = BLACK; 
+            lastMove = null;
+            isBotThinking = false;
+            
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.addEventListener('click', () => handlePlayerMove(r, c));
+                    boardElement.appendChild(cell);
+                }
+            }
+            updateUI();
+            
+            if (currentPlayer === botPlayer) {
+                isBotThinking = true;
+                setTimeout(botMove, 800);
+            }
+        }
+
+        function handlePlayerMove(r, c) {
+            if (!gameActive || isBotThinking || currentPlayer === botPlayer || board[r][c] !== EMPTY) return;
+            
+            executeMove(r, c);
+            
+            if (gameActive) {
+                isBotThinking = true;
+                setTimeout(botMove, 800);
+            }
+        }
+
+        function executeMove(r, c) {
+            board[r][c] = currentPlayer;
+            lastMove = { r, c };
+            
+            if (checkWin(r, c)) {
+                const winnerName = currentPlayer === BLACK ? "黑棋 ⚫" : "白棋 ⚪";
+                const isBotWinner = currentPlayer === botPlayer;
+                showWinner(`${isBotWinner ? '🤖 機器人' : '🎉 你'}(${winnerName}) 獲勝！`);
+                gameActive = false;
+            } else if (isBoardFull()) {
+                showWinner("🤝 和局！");
+                gameActive = false;
+            } else {
+                currentPlayer = currentPlayer === BLACK ? WHITE : BLACK;
+            }
+            updateUI();
+        }
+
+        function botMove() {
+            if (!gameActive) return;
+
+            let bestScore = -1;
+            let move = { r: 7, c: 7 };
+
+            if (lastMove === null && board[7][7] === EMPTY) {
+                move = { r: 7, c: 7 };
+            } else {
+                for (let r = 0; r < BOARD_SIZE; r++) {
+                    for (let c = 0; c < BOARD_SIZE; c++) {
+                        if (board[r][c] === EMPTY) {
+                            let score = evaluatePosition(r, c);
+                            if (score > bestScore) {
+                                bestScore = score;
+                                move = { r, c };
+                            }
+                        }
+                    }
+                }
+            }
+
+            isBotThinking = false;
+            executeMove(move.r, move.c);
+        }
+
+        function evaluatePosition(r, c) {
+            const player = botPlayer;
+            const opponent = botPlayer === BLACK ? WHITE : BLACK;
+            return getScoreForPlayer(r, c, player) * 1.2 + getScoreForPlayer(r, c, opponent);
+        }
+
+        function getScoreForPlayer(r, c, p) {
+            let totalScore = 0;
+            const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+            
+            directions.forEach(([dr, dc]) => {
+                let count = 1;
+                let block = 0;
+
+                let nr = r + dr, nc = c + dc;
+                while (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE && board[nr][nc] === p) {
+                    count++; nr += dr; nc += dc;
+                }
+                if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE || board[nr][nc] !== EMPTY) block++;
+
+                nr = r - dr; nc = c - dc;
+                while (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE && board[nr][nc] === p) {
+                    count++; nr -= dr; nc -= dc;
+                }
+                if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE || board[nr][nc] !== EMPTY) block++;
+
+                if (count >= 5) totalScore += 100000;
+                else if (count === 4) totalScore += (block === 0 ? 10000 : 2000);
+                else if (count === 3) totalScore += (block === 0 ? 1000 : 200);
+                else if (count === 2) totalScore += (block === 0 ? 100 : 20);
+                else if (count === 1) totalScore += 10;
+            });
+            return totalScore;
+        }
+
+        function updateUI() {
+            const cells = document.querySelectorAll('.cell');
+            cells.forEach(cell => {
+                const r = parseInt(cell.dataset.row);
+                const c = parseInt(cell.dataset.col);
+                const val = board[r][c];
+                cell.textContent = val === BLACK ? '⚫' : (val === WHITE ? '⚪' : '');
+                cell.classList.toggle('last-move', lastMove && lastMove.r === r && lastMove.c === c);
+            });
+
+            const playerColor = botPlayer === BLACK ? '⚪ 白棋' : '⚫ 黑棋';
+            const botColor = botPlayer === BLACK ? '⚫ 黑棋' : '⚪ 白棋';
+            roleHint.innerHTML = `你：<strong>${playerColor}</strong><br>機器人：<strong>${botColor}</strong>`;
+
+            if (gameActive) {
+                if (isBotThinking) {
+                    turnIndicator.textContent = `🤖 機器人正在思考...`;
+                    turnIndicator.className = `py-2 px-4 rounded-full font-semibold bg-white text-cyan-600 bot-thinking text-sm shadow-sm`;
+                } else {
+                    const isPlayerTurn = currentPlayer !== botPlayer;
+                    turnIndicator.textContent = isPlayerTurn ? `👉 你的回合 (${currentPlayer === BLACK ? '⚫' : '⚪'})` : `🤖 機器人回合 (⚫)`;
+                    turnIndicator.className = `py-2 px-4 rounded-full font-semibold text-sm shadow-sm ${isPlayerTurn ? 'bg-cyan-500 text-white' : 'bg-gray-100 text-gray-600'}`;
+                }
+            }
+        }
+
+        function checkWin(r, c) {
+            const player = board[r][c];
+            const directions = [[[0, 1], [0, -1]], [[1, 0], [-1, 0]], [[1, 1], [-1, -1]], [[1, -1], [-1, 1]]];
+            return directions.some(dirGroup => {
+                let count = 1;
+                dirGroup.forEach(([dr, dc]) => {
+                    let nr = r + dr, nc = c + dc;
+                    while (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE && board[nr][nc] === player) {
+                        count++; nr += dr; nc += dc;
+                    }
+                });
+                return count >= 5;
+            });
+        }
+
+        function isBoardFull() {
+            return board.every(row => row.every(cell => cell !== EMPTY));
+        }
+
+        function showWinner(text) {
+            winnerText.textContent = text;
+            modal.classList.remove('hidden');
+        }
+
+        function resetGameManually() {
+            botPlayer = (botPlayer === BLACK) ? WHITE : BLACK;
+            modal.classList.add('hidden');
+            initGame();
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第一人稱太空射擊 - 幽靈獵手版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex; flex-direction: column;
+            justify-content: space-between;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 40px; height: 40px;
+            border: 2px solid rgba(0, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: cyan;
+        }
+        #crosshair::before { top: 50%; left: -8px; width: 56px; height: 2px; transform: translateY(-50%); }
+        #crosshair::after { left: 50%; top: -8px; height: 56px; width: 2px; transform: translateX(-50%); }
+
+        .stats-panel {
+            padding: 20px;
+            pointer-events: auto;
+            color: cyan;
+            text-shadow: 0 0 10px cyan;
+        }
+
+        .skill-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+        }
+
+        .skill-bar-container {
+            width: 240px;
+            height: 12px;
+            background: rgba(0, 255, 255, 0.1);
+            border: 1px solid rgba(0, 255, 255, 0.5);
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 0 auto;
+        }
+        #skill-fill {
+            width: 0%;
+            height: 100%;
+            background: cyan;
+            box-shadow: 0 0 15px cyan;
+            transition: width 0.1s linear;
+        }
+        #skill-info {
+            color: cyan;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            text-shadow: 0 0 5px cyan;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 100;
+            pointer-events: auto;
+        }
+        .hidden { display: none !important; }
+
+        .btn-start {
+            background: transparent;
+            border: 2px solid cyan;
+            color: cyan;
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .btn-start:hover {
+            background: cyan; color: black; box-shadow: 0 0 20px cyan;
+        }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <div id="ui-layer">
+        <div class="stats-panel flex justify-between">
+            <div class="text-2xl font-bold">驅魔評分: <span id="score-val">0</span></div>
+            <div class="text-2xl font-bold">護盾能量: <span id="health-val">100</span>%</div>
+        </div>
+
+        <div class="skill-container">
+            <div id="skill-info">系統充能中...</div>
+            <div class="skill-bar-container">
+                <div id="skill-fill"></div>
+            </div>
+        </div>
+
+        <div id="crosshair"></div>
+    </div>
+
+    <div id="overlay" class="overlay">
+        <h1 id="title" class="text-5xl font-bold text-cyan-400 mb-8">太空守衛：百鬼夜行</h1>
+        <div id="msg" class="text-gray-400 mb-8 text-center space-y-2">
+            <p>移動滑鼠瞄準，左鍵射擊</p>
+            <p class="text-cyan-300 font-bold">小鬼正在接近！擊退幽靈威脅！</p>
+            <p class="text-sm">🎯 導向彈幕 | ❄️ 時空停滯 | 🔥 超頻雷射</p>
+            <p class="pt-4 font-bold text-white">[點擊右鍵啟動特殊技能]</p>
+        </div>
+        <button class="btn-start" onclick="startGame()">開始作戰</button>
+    </div>
+
+    <script>
+        let scene, camera, renderer, clock;
+        let targets = [];
+        let lasers = [];
+        let score = 0;
+        let health = 100;
+        let gameActive = false;
+        let mouse = new THREE.Vector2();
+        
+        const SKILLS = [
+            { id: 'HOMING', name: '導向彈幕', color: '#ff00ff', msg: '已就緒：導向彈幕' },
+            { id: 'SLOW', name: '時空停滯', color: '#00ffaa', msg: '已就緒：時空停滯' },
+            { id: 'FAST', name: '超頻雷射', color: '#ffaa00', msg: '已就緒：超頻雷射' }
+        ];
+        let skillCooldown = 10;
+        let skillTimer = 0;
+        let currentSkill = null;
+        let skillReady = false;
+        let activeSkillType = null;
+        let skillDurationTimer = 0;
+
+        const scoreEl = document.getElementById('score-val');
+        const healthEl = document.getElementById('health-val');
+        const skillFillEl = document.getElementById('skill-fill');
+        const skillInfoEl = document.getElementById('skill-info');
+        const overlay = document.getElementById('overlay');
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x050510); // 深藍黑色背景
+            document.body.appendChild(renderer.domElement);
+            clock = new THREE.Clock();
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+            const pointLight = new THREE.PointLight(0x00ffff, 1);
+            pointLight.position.set(5, 5, 5);
+            scene.add(pointLight);
+
+            const starGeometry = new THREE.BufferGeometry();
+            const starVertices = [];
+            for (let i = 0; i < 5000; i++) {
+                starVertices.push((Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000);
+            }
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            scene.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0xccccff, size: 0.7 })));
+
+            window.addEventListener('resize', onWindowResize, false);
+            window.addEventListener('mousemove', onMouseMove, false);
+            window.addEventListener('mousedown', onMouseDown, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            camera.rotation.y = -mouse.x * 0.15;
+            camera.rotation.x = mouse.y * 0.15;
+        }
+
+        function onMouseDown(event) {
+            if (!gameActive) return;
+            if (event.button === 0) fireLaser();
+            if (event.button === 2) useSpecialSkill();
+        }
+
+        function fireLaser(target = null) {
+            const isFast = activeSkillType === 'FAST';
+            const geometry = new THREE.CylinderGeometry(isFast ? 0.15 : 0.08, isFast ? 0.15 : 0.08, 2.5, 8);
+            const color = target ? 0xff00ff : (isFast ? 0xffaa00 : 0x00ffff);
+            const laser = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
+            
+            if (!target) {
+                const side = Math.random() > 0.5 ? 1 : -1;
+                laser.position.set(side * 0.6, -0.6, -1);
+                const vector = new THREE.Vector3(mouse.x, mouse.y, -1).unproject(camera);
+                const direction = vector.sub(camera.position).normalize();
+                laser.rotation.x = Math.PI / 2 + camera.rotation.x;
+                laser.rotation.z = camera.rotation.y;
+                laser.userData.velocity = direction.multiplyScalar(isFast ? 4.5 : 2.5);
+            } else {
+                laser.position.set(0, 0, -1);
+                const direction = target.position.clone().sub(laser.position).normalize();
+                laser.lookAt(target.position);
+                laser.rotateX(Math.PI / 2);
+                laser.userData.velocity = direction.multiplyScalar(3.5);
+            }
+            lasers.push(laser);
+            scene.add(laser);
+        }
+
+        function useSpecialSkill() {
+            if (!skillReady || !currentSkill) return;
+            activeSkillType = currentSkill.id;
+            skillDurationTimer = 5; 
+            if (activeSkillType === 'HOMING') {
+                targets.forEach(t => fireLaser(t));
+                resetSkillSystem();
+            } else {
+                skillInfoEl.innerText = `[啟動中] ${currentSkill.name}`;
+                skillFillEl.style.backgroundColor = 'white';
+            }
+            skillReady = false;
+        }
+
+        function resetSkillSystem() {
+            activeSkillType = null;
+            skillReady = false;
+            skillTimer = 0;
+            currentSkill = null;
+            skillFillEl.style.width = '0%';
+            skillFillEl.style.backgroundColor = 'cyan';
+            skillInfoEl.innerText = '系統充能中...';
+        }
+
+        // 💡 建立小鬼（幽靈）模型
+        function createGhost(size) {
+            const ghost = new THREE.Group();
+            const ghostColor = 0xffffff;
+            const ghostOpacity = 0.7;
+
+            // 身體：圓柱體（下端開放）
+            const bodyGeo = new THREE.CylinderGeometry(size, size, size * 1.5, 16, 1, false);
+            const bodyMat = new THREE.MeshPhongMaterial({ 
+                color: ghostColor, 
+                transparent: true, 
+                opacity: ghostOpacity,
+                emissive: 0x4444ff,
+                emissiveIntensity: 0.5
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = -size * 0.5;
+            ghost.add(body);
+
+            // 頭部：半球體
+            const headGeo = new THREE.SphereGeometry(size, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+            const head = new THREE.Mesh(headGeo, bodyMat);
+            head.position.y = size * 0.25;
+            ghost.add(head);
+
+            // 眼睛
+            const eyeGeo = new THREE.SphereGeometry(size * 0.15, 8, 8);
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            
+            const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+            leftEye.position.set(-size * 0.4, size * 0.3, size * 0.85);
+            ghost.add(leftEye);
+
+            const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+            rightEye.position.set(size * 0.4, size * 0.3, size * 0.85);
+            ghost.add(rightEye);
+
+            return ghost;
+        }
+
+        function spawnTarget() {
+            if (!gameActive) return;
+            
+            const baseSize = Math.random() * 0.8 + 1.2;
+            const ghost = createGhost(baseSize);
+            
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 25 + Math.random() * 10;
+            ghost.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, -70);
+            
+            const targetPos = new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, 10);
+            ghost.userData.velocity = targetPos.sub(ghost.position).normalize().multiplyScalar(0.12 + (score/2000));
+            ghost.userData.hitRadius = baseSize * 1.5;
+            ghost.lookAt(0, 0, 0); // 讓幽靈看著玩家
+            
+            targets.push(ghost);
+            scene.add(ghost);
+            
+            setTimeout(spawnTarget, Math.max(400, 1800 - score/5));
+        }
+
+        function startGame() {
+            gameActive = true; score = 0; health = 100; resetSkillSystem();
+            scoreEl.innerText = score; healthEl.innerText = health;
+            overlay.classList.add('hidden');
+            targets.forEach(t => scene.remove(t));
+            lasers.forEach(l => scene.remove(l));
+            targets = []; lasers = [];
+            camera.position.set(0, 0, 0);
+            spawnTarget();
+            animate();
+        }
+
+        function gameOver() {
+            gameActive = false;
+            overlay.classList.remove('hidden');
+            document.getElementById('title').innerText = "戰艦被幽靈侵蝕";
+            document.getElementById('title').style.color = "#ff4444";
+            document.getElementById('msg').innerText = `最終分數: ${score}\n護盾已崩潰，太空並非生者之地。`;
+        }
+
+        function animate() {
+            if (!gameActive) return;
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (activeSkillType) {
+                skillDurationTimer -= delta;
+                const progress = (skillDurationTimer / 5) * 100;
+                skillFillEl.style.width = progress + '%';
+                if (activeSkillType === 'FAST' && Math.random() > 0.82) fireLaser();
+                if (skillDurationTimer <= 0) resetSkillSystem();
+            } else if (!skillReady) {
+                skillTimer += delta;
+                const progress = Math.min((skillTimer / skillCooldown) * 100, 100);
+                skillFillEl.style.width = progress + '%';
+                if (progress >= 100) {
+                    skillReady = true;
+                    currentSkill = SKILLS[Math.floor(Math.random() * SKILLS.length)];
+                    skillInfoEl.innerText = currentSkill.msg;
+                    skillInfoEl.style.color = currentSkill.color;
+                    skillFillEl.style.backgroundColor = currentSkill.color;
+                }
+            }
+
+            for (let i = lasers.length - 1; i >= 0; i--) {
+                lasers[i].position.add(lasers[i].userData.velocity);
+                if (lasers[i].position.z < -150 || lasers[i].position.z > 10) {
+                    scene.remove(lasers[i]); lasers.splice(i, 1);
+                }
+            }
+
+            const timeSlowFactor = activeSkillType === 'SLOW' ? 0.12 : 1.0;
+            for (let i = targets.length - 1; i >= 0; i--) {
+                const t = targets[i];
+                t.position.add(t.userData.velocity.clone().multiplyScalar(timeSlowFactor));
+                
+                // 幽靈輕微晃動效果
+                t.position.y += Math.sin(Date.now() * 0.005) * 0.02;
+                t.position.x += Math.cos(Date.now() * 0.003) * 0.01;
+
+                for (let j = lasers.length - 1; j >= 0; j--) {
+                    if (lasers[j].position.distanceTo(t.position) < t.userData.hitRadius) {
+                        scene.remove(t); scene.remove(lasers[j]);
+                        targets.splice(i, 1); lasers.splice(j, 1);
+                        score += 50; scoreEl.innerText = score;
+                        break;
+                    }
+                }
+                if (t && t.position.z > 1.5) {
+                    health -= 10; 
+                    healthEl.innerText = health;
+                    scene.remove(t); 
+                    targets.splice(i, 1);
+                    if (health <= 0) gameOver();
+                }
+            }
+            renderer.render(scene, camera);
+        }
+        window.onload = init;
+    </script>
+</body>
+</html>

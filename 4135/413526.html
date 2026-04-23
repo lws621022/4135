@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 躺平發育 - 數值平衡版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0d0d1a;
+            color: #e6e6e6;
+            font-family: 'Segoe UI', sans-serif;
+            overflow-x: hidden;
+            user-select: none;
+        }
+        #game-container {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(10, 50px);
+            grid-template-rows: repeat(10, 50px);
+            gap: 2px;
+            background-color: #16213e;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.2);
+            position: relative;
+            border: 2px solid #1f4068;
+        }
+        .cell {
+            width: 50px;
+            height: 50px;
+            background-color: #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            border-radius: 4px;
+            position: relative;
+        }
+        .cell.wall { background-color: #0f3460; cursor: default; }
+        .cell.door { border: 2px solid #e94560; z-index: 10; }
+        .cell.bed { border: 2px solid #f1c40f; }
+        .cell.tower { border: 2px solid #3498db; }
+        
+        .tower-lv-tag {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            font-size: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 0 2px;
+            color: #3498db;
+        }
+
+        .ghost {
+            position: absolute;
+            font-size: 32px;
+            transition: all 0.5s ease;
+            z-index: 100;
+            pointer-events: auto;
+            filter: drop-shadow(0 0 10px red);
+            left: -100px;
+        }
+        .ghost.retreating { filter: grayscale(1) opacity(0.7); }
+        .ghost.controlled { filter: drop-shadow(0 0 15px #f1c40f) hue-rotate(180deg); }
+
+        .sidebar {
+            width: 350px;
+            background: #16213e;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #3498db;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+
+        .action-btn {
+            background: #1f4068;
+            border: 1px solid #3498db;
+            padding: 8px;
+            border-radius: 6px;
+            text-align: left;
+            transition: 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+        .action-btn:hover:not(:disabled) { background: #3498db; }
+        .action-btn.active { border-color: #f1c40f; background: #1e40af; }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .upgrade-sub-btn {
+            background: #f1c40f;
+            color: #000;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            position: absolute;
+            right: 5px;
+            top: 5px;
+        }
+
+        #ghost-buff-msg {
+            position: absolute;
+            top: -30px;
+            width: 100%;
+            text-align: center;
+            color: #ff4d4d;
+            font-weight: bold;
+            font-size: 14px;
+            height: 20px;
+        }
+        
+        #msg-box {
+            background: rgba(13, 13, 26, 0.95);
+            border: 3px solid #e94560;
+            border-radius: 20px;
+            display: none;
+            z-index: 2000;
+            box-shadow: 0 0 50px rgba(233, 69, 96, 0.5);
+        }
+
+        .pause-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            font-weight: bold;
+            color: white;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="py-4">
+
+    <div class="text-center mb-4">
+        <h1 class="text-3xl font-bold text-red-500 mb-1">👻 Emoji 躺平發育：平衡調整版</h1>
+        <div class="flex justify-center items-center gap-6 text-xl font-mono text-yellow-400">
+            <span id="money-stat">💰 金錢: 100</span>
+            <span id="ghost-level-stat" class="text-red-400">👹 鬼等級: 1</span>
+            <button id="pause-btn" onclick="togglePause()" class="bg-gray-700 hover:bg-gray-600 px-4 py-1 rounded text-sm text-white">⏸️ 暫停</button>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <!-- 左側：地圖 -->
+        <div class="flex flex-col items-center">
+            <div class="relative">
+                <div id="ghost-buff-msg"></div>
+                <div id="game-board">
+                    <div id="pause-text" class="pause-overlay" style="display:none">已暫停</div>
+                </div>
+                <div id="ghost" class="ghost">👻</div>
+                <div id="ghost-hp-bar" class="absolute w-full h-1 bg-gray-800 top-0 left-0">
+                    <div id="ghost-hp-fill" class="h-full bg-green-500" style="width: 100%"></div>
+                </div>
+            </div>
+            <p id="build-instruction" class="mt-3 text-blue-400 font-bold text-sm h-5">武器數值已平衡，現在更考驗策略！</p>
+        </div>
+
+        <!-- 右側：側邊欄 -->
+        <div class="sidebar">
+            <!-- 基地 -->
+            <div>
+                <h3 class="text-yellow-500 font-bold mb-2 border-b border-yellow-500/30 pb-1 text-sm">📈 基地發展</h3>
+                <div class="grid grid-cols-1 gap-2">
+                    <button onclick="upgradeBed()" class="action-btn text-xs">
+                        <div class="flex justify-between">
+                            <span>🛏️ 床鋪 (Lv.<span id="bed-lv">1</span>)</span>
+                            <span class="text-green-400">+$<span id="bed-rate">1</span>/s</span>
+                        </div>
+                        <div class="text-[10px] opacity-60">升級需求: $<span id="bed-cost">20</span></div>
+                    </button>
+                    <button onclick="upgradeDoor()" class="action-btn text-xs">
+                        <div class="flex justify-between">
+                            <span>🚪 大門 (Lv.<span id="door-lv">1</span>)</span>
+                            <span>HP: <span id="door-hp">100</span></span>
+                        </div>
+                        <div class="text-[10px] opacity-60">升級需求: $<span id="door-cost">50</span></div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 特殊道具 -->
+            <div>
+                <h3 class="text-green-400 font-bold mb-2 border-b border-green-400/30 pb-1 text-sm">🧪 特殊道具 (可升級)</h3>
+                <div class="grid grid-cols-1 gap-2">
+                    <div class="relative">
+                        <button onclick="useRepair()" class="action-btn text-xs w-full">
+                            🔧 修理工具 (Lv.<span id="item-repair-lv">1</span>) - $<span id="item-repair-cost">40</span>
+                            <div class="text-[10px] opacity-60">回復大門 <span id="item-repair-val">20</span>% 血量</div>
+                        </button>
+                        <span onclick="upgradeItem('repair')" class="upgrade-sub-btn cursor-pointer">UP ($<span id="up-repair-cost">100</span>)</span>
+                    </div>
+                    <div class="relative">
+                        <button onclick="useSoulChain()" id="btn-soul" class="action-btn text-xs w-full" disabled>
+                            🌀 靈魂鎖鏈 (Lv.<span id="item-soul-lv">1</span>) - $<span id="item-soul-cost">80</span>
+                            <div class="text-[10px] opacity-60">鎖定鬼 <span id="item-soul-val">4</span> 秒</div>
+                        </button>
+                        <span onclick="upgradeItem('soul')" class="upgrade-sub-btn cursor-pointer">UP ($<span id="up-soul-cost">150</span>)</span>
+                    </div>
+                    <div class="relative">
+                        <button onclick="useOverload()" class="action-btn text-xs w-full">
+                            🔋 能量電池 (Lv.<span id="item-overload-lv">1</span>) - $<span id="item-overload-cost">100</span>
+                            <div class="text-[10px] opacity-60">倍速攻擊 <span id="item-overload-val">8</span> 秒</div>
+                        </button>
+                        <span onclick="upgradeItem('overload')" class="upgrade-sub-btn cursor-pointer">UP ($<span id="up-overload-cost">200</span>)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 武器商店 -->
+            <div>
+                <h3 class="text-blue-400 font-bold mb-2 border-b border-blue-400/30 pb-1 text-sm">⚔️ 武器商店 (數值已平衡)</h3>
+                <div class="grid grid-cols-1 gap-2">
+                    <button onclick="setBuildMode('machine_gun', this)" class="action-btn weapon-btn text-xs flex gap-2 items-center">
+                        <span class="text-xl">🔫</span>
+                        <div>
+                            <div>機槍塔 ($80)</div>
+                            <div class="text-[10px] opacity-60">傷害: 2 (Lv.1) | 射速: 0.5s</div>
+                        </div>
+                    </button>
+                    <button onclick="setBuildMode('missile', this)" class="action-btn weapon-btn text-xs flex gap-2 items-center">
+                        <span class="text-xl">🚀</span>
+                        <div>
+                            <div>導彈器 ($250)</div>
+                            <div class="text-[10px] opacity-60">傷害: 12 (Lv.1) | 射速: 2.5s</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 結局彈窗 -->
+    <div id="msg-box" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 p-10 text-center">
+        <h2 class="text-4xl font-bold mb-6 text-red-500">大門失守了！</h2>
+        <p class="mb-6 text-gray-300">鬼已經進化到不可阻擋的程度...</p>
+        <button onclick="resetGame()" class="bg-red-600 hover:bg-red-700 px-8 py-3 rounded-full font-bold text-lg transition shadow-lg">
+            重新開始挑戰
+        </button>
+    </div>
+
+    <script>
+        // 平衡調整後的武器數據
+        const weaponTypes = {
+            machine_gun: { emoji: '🔫', bullet: '▫️', cost: 80, damage: 2, rate: 0.5 },
+            missile: { emoji: '🚀', bullet: '🔥', cost: 250, damage: 12, rate: 2.5 }
+        };
+
+        const getInitialState = () => ({
+            money: 100,
+            bedLevel: 1,
+            doorLevel: 1,
+            doorMaxHp: 100,
+            doorHp: 100,
+            ghostLevel: 1,
+            ghostHp: 120, // 初始血量調高
+            ghostMaxHp: 120,
+            ghostAtkSpeed: 1, 
+            isGameOver: false,
+            isPaused: false,
+            buildMode: null,
+            towers: [],
+            lastGhostAttack: 0,
+            ghostState: 'attack',
+            retreatTimer: 0,
+            overloadTimer: 0,
+            ghostBuff: null,
+            ghostBuffTimer: 0,
+            startTime: performance.now(),
+            items: {
+                repair: { lv: 1, cost: 40, val: 20, upCost: 100 }, // 修復量下調，增加難度
+                soul: { lv: 1, cost: 80, val: 4, upCost: 150 },
+                overload: { lv: 1, cost: 100, val: 8, upCost: 200 }
+            }
+        });
+
+        let state = getInitialState();
+
+        const config = {
+            gridSize: 10,
+            doorPos: { r: 5, c: 3 },
+            bedPos: { r: 5, c: 5 }
+        };
+
+        function init() {
+            const board = document.getElementById('game-board');
+            board.innerHTML = '<div id="pause-text" class="pause-overlay" style="display:none">已暫停</div>';
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 10; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.r = r; cell.dataset.c = c;
+                    if (r === config.doorPos.r && c === config.doorPos.c) { cell.innerHTML = '🚪'; cell.classList.add('door'); cell.id = 'cell-door'; }
+                    else if (r === config.bedPos.r && c === config.bedPos.c) { cell.innerHTML = '🛏️'; cell.classList.add('bed'); }
+                    else if (r === 0 || r === 9 || c === 0 || c === 9) cell.classList.add('wall');
+                    cell.onclick = () => handleCellClick(r, c);
+                    board.appendChild(cell);
+                }
+            }
+            updateUI();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function resetGame() {
+            state = getInitialState();
+            document.getElementById('msg-box').style.display = 'none';
+            document.getElementById('pause-text').style.display = 'none';
+            document.querySelectorAll('.weapon-btn').forEach(b => b.classList.remove('active'));
+            init();
+        }
+
+        function togglePause() {
+            state.isPaused = !state.isPaused;
+            document.getElementById('pause-btn').innerText = state.isPaused ? "▶️ 繼續" : "⏸️ 暫停";
+            document.getElementById('pause-text').style.display = state.isPaused ? "flex" : "none";
+        }
+
+        function handleCellClick(r, c) {
+            if (state.isGameOver || state.isPaused) return;
+            const tower = state.towers.find(t => t.r === r && t.c === c);
+            if (tower) {
+                let cost = Math.floor(tower.typeData.cost * 1.5 * tower.level); // 升級成本提高
+                if (state.money >= cost) {
+                    state.money -= cost; tower.level++; updateUI();
+                    showFloatingText(`Lv.${tower.level}`, `.cell[data-r="${r}"][data-c="${c}"]`);
+                    document.querySelector(`.cell[data-r="${r}"][data-c="${c}"] .tower-lv-tag`).innerText = `L${tower.level}`;
+                } else {
+                    showFloatingText("金錢不足", `.cell[data-r="${r}"][data-c="${c}"]`);
+                }
+                return;
+            }
+            if (state.buildMode) {
+                const isOccupied = (r === config.doorPos.r && c === config.doorPos.c) || (r === config.bedPos.r && c === config.bedPos.c) || (r === 0 || r === 9 || c === 0 || c === 9);
+                if (!isOccupied) {
+                    const data = weaponTypes[state.buildMode];
+                    if (state.money >= data.cost) {
+                        state.money -= data.cost;
+                        state.towers.push({ r, c, level: 1, cooldown: 0, typeData: data });
+                        const cell = document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+                        cell.innerHTML = `<span>${data.emoji}</span><span class="tower-lv-tag">L1</span>`;
+                        cell.classList.add('tower');
+                        updateUI();
+                    } else {
+                        showFloatingText("金錢不足", "#money-stat");
+                    }
+                }
+            }
+        }
+
+        function setBuildMode(type, btn) {
+            if (state.isPaused) return;
+            state.buildMode = type;
+            document.querySelectorAll('.weapon-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        function upgradeItem(key) {
+            if (state.isPaused) return;
+            let item = state.items[key];
+            if (state.money >= item.upCost) {
+                state.money -= item.upCost;
+                item.lv++;
+                item.upCost = Math.floor(item.upCost * 2.0); // 道具升級成本大幅增加
+                if (key === 'repair') item.val += 8;
+                if (key === 'soul') item.val += 1.5;
+                if (key === 'overload') item.val += 4;
+                updateUI();
+                showFloatingText("道具升級!", `#item-${key}-lv`);
+            } else {
+                showFloatingText("金錢不足", "#money-stat");
+            }
+        }
+
+        function useRepair() {
+            if (state.isPaused) return;
+            let item = state.items.repair;
+            if (state.money >= item.cost) {
+                state.money -= item.cost;
+                state.doorHp = Math.min(state.doorMaxHp, state.doorHp + state.doorMaxHp * (item.val/100));
+                showFloatingText(`+${item.val}% 修復`, "#cell-door");
+                updateUI();
+            }
+        }
+
+        function useSoulChain() {
+            if (state.isPaused) return;
+            let item = state.items.soul;
+            if (state.money >= item.cost && state.ghostState === 'retreat') {
+                state.money -= item.cost;
+                state.ghostState = 'controlled';
+                state.retreatTimer = item.val;
+                showFloatingText("⛓️ 鎖定!", "#ghost");
+                updateUI();
+            }
+        }
+
+        function useOverload() {
+            if (state.isPaused) return;
+            let item = state.items.overload;
+            if (state.money >= item.cost) {
+                state.money -= item.cost;
+                state.overloadTimer = item.val;
+                showFloatingText("⚡ 超頻啟動!", "#money-stat");
+                updateUI();
+            }
+        }
+
+        function upgradeBed() {
+            if (state.isPaused) return;
+            let cost = Math.floor(20 * Math.pow(1.8, state.bedLevel - 1));
+            if (state.money >= cost) { state.money -= cost; state.bedLevel++; updateUI(); }
+        }
+
+        function upgradeDoor() {
+            if (state.isPaused) return;
+            let cost = Math.floor(50 * Math.pow(2.2, state.doorLevel - 1));
+            if (state.money >= cost) {
+                state.money -= cost; state.doorLevel++;
+                state.doorMaxHp += 300; state.doorHp = state.doorMaxHp; updateUI();
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('money-stat').innerText = `💰 金錢: ${Math.floor(state.money)}`;
+            document.getElementById('ghost-level-stat').innerText = `👹 鬼等級: ${state.ghostLevel}`;
+            document.getElementById('bed-lv').innerText = state.bedLevel;
+            document.getElementById('bed-rate').innerText = state.bedLevel;
+            document.getElementById('bed-cost').innerText = Math.floor(20 * Math.pow(1.8, state.bedLevel - 1));
+            document.getElementById('door-lv').innerText = state.doorLevel;
+            document.getElementById('door-hp').innerText = Math.floor(state.doorHp);
+            document.getElementById('door-cost').innerText = Math.floor(50 * Math.pow(2.2, state.doorLevel - 1));
+            
+            for (let key in state.items) {
+                let item = state.items[key];
+                document.getElementById(`item-${key}-lv`).innerText = item.lv;
+                document.getElementById(`item-${key}-cost`).innerText = item.cost;
+                document.getElementById(`item-${key}-val`).innerText = item.val.toFixed(0);
+                document.getElementById(`up-${key}-cost`).innerText = item.upCost;
+            }
+
+            document.getElementById('ghost-hp-fill').style.width = `${Math.max(0, (state.ghostHp / state.ghostMaxHp) * 100)}%`;
+            const doorEl = document.getElementById('cell-door');
+            if (doorEl) {
+                doorEl.style.background = `linear-gradient(to top, #e94560 ${(state.doorHp/state.doorMaxHp)*100}%, #1a1a2e 0%)`;
+            }
+            document.getElementById('btn-soul').disabled = (state.ghostState !== 'retreat');
+        }
+
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            if (state.isGameOver) return;
+            if (state.isPaused) {
+                lastTime = timestamp;
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+            const dt = (timestamp - (lastTime || timestamp)) / 1000;
+            lastTime = timestamp;
+
+            if (timestamp - state.startTime < 1000) {
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+
+            state.money += state.bedLevel * dt;
+
+            // 門回血速度微調
+            if (timestamp - state.lastGhostAttack > 6000 && state.doorHp < state.doorMaxHp) {
+                state.doorHp += (state.doorLevel * 3) * dt;
+            }
+
+            handleGhostLogic(dt);
+
+            const speedMult = state.overloadTimer > 0 ? 2 : 1;
+            if (state.overloadTimer > 0) state.overloadTimer -= dt;
+
+            state.towers.forEach(t => {
+                t.cooldown -= dt * speedMult;
+                if (t.cooldown <= 0 && state.ghostState !== 'retreat') {
+                    // 傷害平衡：lv 影響傷害成長
+                    state.ghostHp -= (t.typeData.damage + (t.level - 1) * (t.typeData.damage * 0.5));
+                    t.cooldown = t.typeData.rate;
+                    createBullet(t);
+                }
+            });
+
+            updateUI();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function handleGhostLogic(dt) {
+            const ghost = document.getElementById('ghost');
+            const buffMsg = document.getElementById('ghost-buff-msg');
+
+            if (state.ghostState === 'attack') {
+                ghost.style.left = (config.doorPos.c * 52 - 30) + 'px';
+                ghost.style.top = (config.doorPos.r * 52 + 10) + 'px';
+                ghost.classList.remove('retreating', 'controlled');
+
+                state.ghostBuffTimer -= dt;
+                if (state.ghostBuffTimer <= 0) {
+                    const rnd = Math.random();
+                    if (rnd < 0.2) { 
+                        state.ghostBuff = 'RAGE'; state.ghostBuffTimer = 4; buffMsg.innerText = "👹 鬼進入狂暴狀態！";
+                    } else {
+                        state.ghostBuff = null; buffMsg.innerText = ""; state.ghostBuffTimer = 5;
+                    }
+                }
+
+                let dmg = (state.ghostLevel * 5) * state.ghostAtkSpeed;
+                if (state.ghostBuff === 'RAGE') dmg *= 2.5;
+                state.doorHp -= dmg * dt;
+                state.lastGhostAttack = performance.now();
+
+                if (state.doorHp <= 0) endGame();
+
+                if (state.ghostHp < state.ghostMaxHp * 0.2) { // 殘血量下調到 20% 才逃跑
+                    state.ghostState = 'retreat';
+                    state.retreatTimer = 8;
+                }
+            } 
+            else if (state.ghostState === 'retreat') {
+                ghost.style.left = "-150px";
+                ghost.classList.add('retreating');
+                buffMsg.innerText = "🏃 鬼正在強化護盾...";
+                
+                state.retreatTimer -= dt;
+                if (state.retreatTimer <= 0) {
+                    state.ghostState = 'attack';
+                    state.ghostLevel++;
+                    state.ghostAtkSpeed += 0.2; // 攻速成長提高
+                    state.ghostMaxHp *= 1.6; // 血量成長大幅提高
+                    state.ghostHp = state.ghostMaxHp;
+                }
+            }
+            else if (state.ghostState === 'controlled') {
+                ghost.style.left = "80px"; 
+                ghost.style.top = "80px";
+                ghost.classList.add('controlled');
+                buffMsg.innerText = "⛓️ 鬼被靈魂鎖鏈禁錮！";
+                
+                state.retreatTimer -= dt;
+                if (state.retreatTimer <= 0) {
+                    state.ghostState = 'retreat';
+                    state.retreatTimer = 1.5;
+                }
+            }
+        }
+
+        function createBullet(t) {
+            const b = document.createElement('div');
+            b.innerText = t.typeData.bullet;
+            b.className = 'absolute transition-all duration-200 pointer-events-none text-sm';
+            b.style.left = (t.c * 52 + 25) + 'px';
+            b.style.top = (t.r * 52 + 25) + 'px';
+            document.getElementById('game-board').appendChild(b);
+            const ghost = document.getElementById('ghost');
+            setTimeout(() => {
+                b.style.left = (ghost.offsetLeft + 15) + 'px';
+                b.style.top = (ghost.offsetTop + 15) + 'px';
+            }, 20);
+            setTimeout(() => b.remove(), 220);
+        }
+
+        function showFloatingText(text, selector) {
+            const el = document.querySelector(selector) || document.getElementById(selector.replace('#',''));
+            if (!el) return;
+            const f = document.createElement('div');
+            f.innerText = text;
+            f.className = 'fixed font-bold text-yellow-400 z-[1000] pointer-events-none transition-all duration-1000';
+            const r = el.getBoundingClientRect();
+            f.style.left = r.left + 'px'; f.style.top = r.top + 'px';
+            document.body.appendChild(f);
+            setTimeout(() => { f.style.transform = 'translateY(-50px)'; f.style.opacity = '0'; }, 50);
+            setTimeout(() => f.remove(), 1050);
+        }
+
+        function endGame() { 
+            state.isGameOver = true; 
+            document.getElementById('msg-box').style.display = 'block'; 
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

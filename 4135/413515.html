@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji 空間突圍 - 成就系統版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle, #2d3748, #1a202c);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .emoji {
+            position: absolute;
+            will-change: transform;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #player {
+            z-index: 10;
+            font-size: 50px;
+            pointer-events: auto;
+            cursor: grab;
+            filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.5));
+        }
+        .obstacle {
+            z-index: 5;
+            font-size: 60px;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            pointer-events: none;
+            z-index: 20;
+            color: white;
+        }
+        .status-box {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px 16px;
+            border-radius: 20px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        .achievement-toast {
+            position: fixed;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #f6e05e, #d69e2e);
+            color: #1a202c;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-weight: bold;
+            z-index: 200;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            transition: top 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .achievement-list {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+            max-width: 400px;
+        }
+        .achievement-item {
+            background: rgba(255,255,255,0.1);
+            padding: 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            opacity: 0.4;
+            transition: opacity 0.3s;
+        }
+        .achievement-item.unlocked {
+            opacity: 1;
+            background: rgba(246, 224, 94, 0.2);
+            border: 1px solid #f6e05e;
+        }
+        .btn {
+            margin-top: 25px;
+            padding: 12px 35px;
+            background: #e53e3e;
+            border: none;
+            border-radius: 50px;
+            color: white;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="achievement-toast" class="achievement-toast">
+        <span id="toast-icon">🏆</span>
+        <span id="toast-text">成就達成！</span>
+    </div>
+
+    <div id="ui-layer">
+        <div class="status-box">存活: <span id="score">0</span>s</div>
+        <div class="status-box">最佳: <span id="high-score">0</span>s</div>
+    </div>
+
+    <div id="player" class="emoji">🚀</div>
+
+    <div id="overlay">
+        <h1 id="title" class="text-4xl font-extrabold mb-4 text-yellow-500">成就巔峰</h1>
+        <p id="message" class="text-lg opacity-90">閃避巨型 Emoji，解鎖傳奇稱號！</p>
+        
+        <div class="achievement-list" id="achievement-grid">
+            <!-- 成就將由 JS 生成 -->
+        </div>
+
+        <button id="start-btn" class="btn">開始極限挑戰</button>
+    </div>
+</div>
+
+<script>
+    const player = document.getElementById('player');
+    const gameContainer = document.getElementById('game-container');
+    const scoreElement = document.getElementById('score');
+    const highScoreElement = document.getElementById('high-score');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('start-btn');
+    const achievementGrid = document.getElementById('achievement-grid');
+    const toast = document.getElementById('achievement-toast');
+    const toastText = document.getElementById('toast-text');
+
+    const obstacles = ['☄️', '🛸', '🛰️', '👾', '💥', '🌀', '💎', '🔥', '⚡️', '🔫'];
+    
+    // 成就定義
+    const ACHIEVEMENTS = [
+        { id: 'survive_10', title: '初試身手', desc: '存活 10 秒', requirement: 10, icon: '🥉' },
+        { id: 'survive_30', title: '閃避達人', desc: '存活 30 秒', requirement: 30, icon: '🥈' },
+        { id: 'survive_60', title: '生存大師', desc: '存活 60 秒', requirement: 60, icon: '🥇' },
+        { id: 'survive_100', title: '傳奇飛官', desc: '存活 100 秒', requirement: 100, icon: '👑' },
+        { id: 'play_5', title: '毅力不懈', desc: '累積遊玩 5 次', requirement: 5, icon: '🔋', type: 'count' },
+        { id: 'high_score_50', title: '超越極限', desc: '單局超過 50 秒', requirement: 50, icon: '🔥' }
+    ];
+
+    let gameState = 'STOPPED';
+    let startTime = 0;
+    let score = 0;
+    let highScore = localStorage.getItem('emoji-space-highscore-giant') || 0;
+    let playCount = parseInt(localStorage.getItem('emoji-play-count')) || 0;
+    let unlockedAchievements = JSON.parse(localStorage.getItem('emoji-achievements')) || [];
+
+    let playerPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    let targetPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    let obstacleList = [];
+    let baseSpawnRate = 500;
+    let lastSpawnTime = 0;
+    let animationId;
+
+    function initAchievementsUI() {
+        achievementGrid.innerHTML = '';
+        ACHIEVEMENTS.forEach(ach => {
+            const isUnlocked = unlockedAchievements.includes(ach.id);
+            const item = document.createElement('div');
+            item.className = `achievement-item ${isUnlocked ? 'unlocked' : ''}`;
+            item.innerHTML = `<div class="text-xl">${ach.icon}</div><div>${ach.title}</div><div class="opacity-70" style="font-size:0.6rem">${ach.desc}</div>`;
+            achievementGrid.appendChild(item);
+        });
+    }
+
+    function checkAchievements() {
+        ACHIEVEMENTS.forEach(ach => {
+            if (unlockedAchievements.includes(ach.id)) return;
+
+            let accomplished = false;
+            if (ach.id === 'play_5' && playCount >= 5) accomplished = true;
+            else if (ach.requirement && score >= ach.requirement && ach.type !== 'count') accomplished = true;
+
+            if (accomplished) {
+                unlockAchievement(ach);
+            }
+        });
+    }
+
+    function unlockAchievement(ach) {
+        unlockedAchievements.push(ach.id);
+        localStorage.setItem('emoji-achievements', JSON.stringify(unlockedAchievements));
+        
+        // 彈出提示
+        toastText.innerText = `解鎖成就：${ach.title}`;
+        document.getElementById('toast-icon').innerText = ach.icon;
+        toast.style.top = '20px';
+        
+        setTimeout(() => {
+            toast.style.top = '-100px';
+        }, 3000);
+
+        initAchievementsUI();
+    }
+
+    function updatePlayerDisplay() {
+        playerPos.x += (targetPos.x - playerPos.x) * 0.35;
+        playerPos.y += (targetPos.y - playerPos.y) * 0.35;
+        player.style.left = `${playerPos.x - 25}px`;
+        player.style.top = `${playerPos.y - 25}px`;
+    }
+
+    function handleInput(e) {
+        if (gameState !== 'RUNNING') return;
+        const input = e.touches ? e.touches[0] : e;
+        targetPos.x = input.clientX;
+        targetPos.y = input.clientY;
+    }
+
+    window.addEventListener('mousemove', handleInput);
+    window.addEventListener('touchstart', handleInput, { passive: false });
+    window.addEventListener('touchmove', handleInput, { passive: false });
+
+    function gameLoop(timestamp) {
+        if (gameState !== 'RUNNING') return;
+
+        score = Math.floor((timestamp - startTime) / 1000);
+        scoreElement.textContent = score;
+
+        checkAchievements();
+
+        const difficulty = score / 10; 
+        const currentSpawnRate = Math.max(120, baseSpawnRate - (score * 12));
+
+        if (timestamp - lastSpawnTime > currentSpawnRate) {
+            createObstacle(difficulty);
+            lastSpawnTime = timestamp;
+        }
+
+        updatePlayerDisplay();
+
+        for (let i = obstacleList.length - 1; i >= 0; i--) {
+            const obs = obstacleList[i];
+            obs.currentX += obs.vx * (1.8 + difficulty * 0.25); 
+            obs.currentY += obs.vy * (1.8 + difficulty * 0.25);
+            obs.element.style.left = `${obs.currentX - 30}px`;
+            obs.element.style.top = `${obs.currentY - 30}px`;
+
+            const dist = Math.sqrt((obs.currentX - playerPos.x)**2 + (obs.currentY - playerPos.y)**2);
+            if (dist < 45) { gameOver(); return; }
+
+            if (obs.currentX < -200 || obs.currentX > window.innerWidth + 200 ||
+                obs.currentY < -200 || obs.currentY > window.innerHeight + 200) {
+                obs.element.remove();
+                obstacleList.splice(i, 1);
+            }
+        }
+        animationId = requestAnimationFrame(gameLoop);
+    }
+
+    function createObstacle(difficulty) {
+        const obsEl = document.createElement('div');
+        obsEl.className = 'emoji obstacle';
+        obsEl.textContent = obstacles[Math.floor(Math.random() * obstacles.length)];
+        
+        const side = Math.floor(Math.random() * 4);
+        let startX, startY;
+        if (side === 0) { startX = Math.random() * window.innerWidth; startY = -100; }
+        else if (side === 1) { startX = Math.random() * window.innerWidth; startY = window.innerHeight + 100; }
+        else if (side === 2) { startX = -100; startY = Math.random() * window.innerHeight; }
+        else { startX = window.innerWidth + 100; startY = Math.random() * window.innerHeight; }
+
+        const speed = 5 + Math.random() * 5;
+        const angle = Math.atan2(playerPos.y - startY, playerPos.x - startX) + (Math.random()-0.5)*0.5;
+        
+        obsEl.style.left = `${startX}px`;
+        obsEl.style.top = `${startY}px`;
+        gameContainer.appendChild(obsEl);
+        obstacleList.push({ element: obsEl, currentX: startX, currentY: startY, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed });
+    }
+
+    function startGame() {
+        playCount++;
+        localStorage.setItem('emoji-play-count', playCount);
+        checkAchievements();
+
+        obstacleList.forEach(obs => obs.element.remove());
+        obstacleList = [];
+        gameState = 'RUNNING';
+        score = 0;
+        scoreElement.textContent = "0";
+        overlay.style.display = 'none';
+        playerPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        targetPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        startTime = performance.now();
+        lastSpawnTime = startTime;
+        requestAnimationFrame(gameLoop);
+    }
+
+    function gameOver() {
+        gameState = 'OVER';
+        cancelAnimationFrame(animationId);
+        if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('emoji-space-highscore-giant', highScore);
+        }
+        highScoreElement.textContent = highScore;
+        initAchievementsUI();
+        overlay.style.display = 'flex';
+        document.getElementById('title').innerText = "挑戰結束";
+        document.getElementById('message').innerText = `本次存活：${score} 秒`;
+    }
+
+    startBtn.addEventListener('click', startGame);
+    highScoreElement.textContent = highScore;
+    initAchievementsUI();
+    updatePlayerDisplay();
+</script>
+</body>
+</html>

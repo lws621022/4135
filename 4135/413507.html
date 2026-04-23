@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji 水果貪吃蛇 (含音效)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a202c;
+            touch-action: none;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        #game-container {
+            position: relative;
+            background: #2d3748;
+            border-radius: 1rem;
+            padding: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        canvas {
+            background-color: #1a202c;
+            border-radius: 0.5rem;
+            display: block;
+            image-rendering: auto;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-top: 1rem;
+            width: 180px;
+        }
+        .btn {
+            background: #4a5568;
+            height: 50px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 0.5rem;
+            font-size: 1.5rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .btn:active {
+            background: #718096;
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+<div class="flex flex-col items-center">
+    <div class="mb-4 text-center">
+        <h1 class="text-3xl font-bold text-green-400">音效水果蛇 🐍</h1>
+        <p id="score-display" class="text-xl font-mono">得分: 0</p>
+    </div>
+
+    <div id="game-container">
+        <canvas id="snakeCanvas"></canvas>
+        
+        <div id="gameOver" class="absolute inset-0 bg-black/80 hidden flex-col justify-center items-center rounded-2xl z-10">
+            <h2 class="text-4xl font-bold text-red-500 mb-2">哎呀！</h2>
+            <p id="finalScore" class="text-xl mb-6 text-white">最終得分: 0</p>
+            <button id="restartBtn" class="bg-green-500 hover:bg-green-600 px-8 py-3 rounded-full font-bold text-lg transition transform active:scale-90">
+                重新開始
+            </button>
+        </div>
+    </div>
+
+    <div class="controls md:hidden">
+        <div></div>
+        <div class="btn" id="upBtn" title="向上">🔼</div>
+        <div></div>
+        <div class="btn" id="leftBtn" title="向左">◀️</div>
+        <div class="btn" id="downBtn" title="向下">🔽</div>
+        <div class="btn" id="rightBtn" title="向右">▶️</div>
+    </div>
+    
+    <p class="mt-4 text-gray-400 text-sm hidden md:block">使用方向鍵移動 | 點擊畫面啟動音效</p>
+</div>
+
+<script>
+    const canvas = document.getElementById('snakeCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score-display');
+    const gameOverScreen = document.getElementById('gameOver');
+    const finalScoreDisplay = document.getElementById('finalScore');
+    const restartBtn = document.getElementById('restartBtn');
+
+    // 音訊上下文
+    let audioCtx = null;
+
+    // 初始化音訊 (需使用者互動觸發)
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    // 播放「吃掉」音效
+    function playEatSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+        osc.frequency.exponentialRampToValueAtTime(1046.50, audioCtx.currentTime + 0.1); // C6
+        
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    // 播放「失敗」音效
+    function playFailSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.linearRampToValueAtTime(40, audioCtx.currentTime + 0.5);
+        
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.5);
+    }
+
+    const gridSize = 20;
+    let tileCount;
+    let snake = [];
+    let food = { x: 5, y: 5, emoji: '🍎' };
+    let dx = 0;
+    let dy = 0;
+    let nextDx = 0;
+    let nextDy = 0;
+    let score = 0;
+    let gameLoop;
+    let currentSpeed = 300; 
+
+    const fruits = ['🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑', '🥭', '🍍', '🥝'];
+
+    function initGame() {
+        initAudio();
+        const size = Math.min(window.innerWidth - 40, 400);
+        canvas.width = size;
+        canvas.height = size;
+        tileCount = canvas.width / gridSize;
+        
+        snake = [
+            { x: 10, y: 10, emoji: '🐍' },
+            { x: 10, y: 11, emoji: '🍎' }
+        ];
+        
+        dx = 0;
+        dy = -1;
+        nextDx = 0;
+        nextDy = -1;
+        score = 0;
+        currentSpeed = 300; 
+        scoreDisplay.textContent = `得分: ${score}`;
+        gameOverScreen.style.display = 'none';
+        
+        spawnFood();
+        
+        if (gameLoop) clearInterval(gameLoop);
+        gameLoop = setInterval(draw, currentSpeed);
+    }
+
+    function spawnFood() {
+        food.x = Math.floor(Math.random() * tileCount);
+        food.y = Math.floor(Math.random() * tileCount);
+        food.emoji = fruits[Math.floor(Math.random() * fruits.length)];
+        snake.forEach(part => {
+            if (part.x === food.x && part.y === food.y) spawnFood();
+        });
+    }
+
+    function draw() {
+        update();
+        ctx.fillStyle = '#1a202c';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 畫格線
+        ctx.strokeStyle = '#2d3748';
+        ctx.lineWidth = 0.5;
+        for(let i=0; i<canvas.width; i+=gridSize) {
+            ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke();
+        }
+
+        ctx.font = `${gridSize - 2}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(food.emoji, food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+
+        snake.forEach((part) => {
+            ctx.fillText(part.emoji, part.x * gridSize + gridSize/2, part.y * gridSize + gridSize/2);
+        });
+    }
+
+    function update() {
+        dx = nextDx;
+        dy = nextDy;
+        if (dx === 0 && dy === 0) return;
+
+        const head = { x: snake[0].x + dx, y: snake[0].y + dy, emoji: '🐍' };
+
+        // 牆壁碰撞
+        if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+            return endGame();
+        }
+
+        // 身體碰撞
+        for (let i = 1; i < snake.length; i++) {
+            if (snake[i].x === head.x && snake[i].y === head.y) {
+                return endGame();
+            }
+        }
+
+        // 吃到食物
+        if (head.x === food.x && head.y === food.y) {
+            playEatSound();
+            score += 10;
+            scoreDisplay.textContent = `得分: ${score}`;
+            const oldHeadEmoji = food.emoji;
+            snake[0].emoji = oldHeadEmoji;
+            snake.unshift(head);
+            spawnFood();
+            
+            if (score % 100 === 0 && currentSpeed > 150) {
+                currentSpeed -= 20;
+                clearInterval(gameLoop);
+                gameLoop = setInterval(draw, currentSpeed);
+            }
+        } else {
+            const oldHeadEmoji = snake[0].emoji;
+            snake.unshift(head);
+            snake.pop();
+            snake[1].emoji = oldHeadEmoji;
+        }
+    }
+
+    function endGame() {
+        playFailSound();
+        clearInterval(gameLoop);
+        finalScoreDisplay.textContent = `最終得分: ${score}`;
+        gameOverScreen.style.display = 'flex';
+    }
+
+    function handleInput(key) {
+        initAudio(); // 每次點擊確保 AudioContext 啟動
+        switch(key) {
+            case 'ArrowUp': if (dy !== 1) { nextDx = 0; nextDy = -1; } break;
+            case 'ArrowDown': if (dy !== -1) { nextDx = 0; nextDy = 1; } break;
+            case 'ArrowLeft': if (dx !== 1) { nextDx = -1; nextDy = 0; } break;
+            case 'ArrowRight': if (dx !== -1) { nextDx = 1; nextDy = 0; } break;
+        }
+    }
+
+    window.addEventListener('keydown', e => handleInput(e.key));
+    document.getElementById('upBtn').onclick = () => handleInput('ArrowUp');
+    document.getElementById('downBtn').onclick = () => handleInput('ArrowDown');
+    document.getElementById('leftBtn').onclick = () => handleInput('ArrowLeft');
+    document.getElementById('rightBtn').onclick = () => handleInput('ArrowRight');
+    restartBtn.onclick = initGame;
+
+    window.onload = initGame;
+</script>
+
+</body>
+</html>
