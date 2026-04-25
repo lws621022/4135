@@ -79,6 +79,28 @@
       display: block;
     }
 
+    .card.disabled {
+      background: #e5e7eb;
+    }
+
+    .card.disabled:hover {
+      transform: none;
+      background: #e5e7eb;
+    }
+
+    .card.disabled a {
+      color: #9ca3af;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
+
+    .not-submitted {
+      display: block;
+      margin-top: 8px;
+      font-size: 14px;
+      color: #6b7280;
+    }
+
     @media (max-width: 768px) {
       h1 {
         font-size: 32px;
@@ -111,21 +133,39 @@
   </div>
 
   <script>
-    // 4135班
-    for (let i = 413501; i <= 413534; i++) {
-      let html = `<div class="card">
-        <a href="4135/${i}.html">${i}</a>
-      </div>`;
-      document.getElementById("class4135").innerHTML += html;
-    }
+function createCards(start, end, folder, containerId) {
+  const container = document.getElementById(containerId);
 
-    // 4136班
-    for (let i = 413601; i <= 413634; i++) {
-      let html = `<div class="card">
-        <a href="4136/${i}.html">${i}</a>
-      </div>`;
-      document.getElementById("class4136").innerHTML += html;
-    }
-  </script>
+  for (let i = start; i <= end; i++) {
+    const path = `./${folder}/${i}.html`;
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const link = document.createElement("a");
+    link.textContent = i;
+
+    card.appendChild(link);
+    container.appendChild(card);
+
+    fetch(path)
+      .then(response => {
+        if (response.ok) {
+          link.href = path;
+        } else {
+          card.classList.add("disabled");
+          link.textContent = i + " 未繳交";
+        }
+      })
+      .catch(() => {
+        card.classList.add("disabled");
+        link.textContent = i + " 未繳交";
+      });
+  }
+}
+
+createCards(413501, 413534, "4135", "class4135");
+createCards(413601, 413634, "4136", "class4136");
+</script>
 </body>
 </html>
